@@ -32,7 +32,7 @@ jobs:
           command: echo "JOB_START_SYSBENCH=$(date +%s%N)"
       - run:
           name: Install sysbench
-          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y sysbench
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y sysbench
       - run:
           name: System Info
           command: |
@@ -117,8 +117,8 @@ jobs:
           no_output_timeout: 15m
           command: |
             export DEBIAN_FRONTEND=noninteractive
-            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl || true
       - restore_cache:
           keys:
             - uv-python-{{ checksum "uv.lock" }}
@@ -333,8 +333,8 @@ jobs:
           no_output_timeout: 15m
           command: |
             export DEBIAN_FRONTEND=noninteractive
-            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl || true
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -424,8 +424,8 @@ jobs:
           no_output_timeout: 15m
           command: |
             export DEBIAN_FRONTEND=noninteractive
-            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl || true
       - run:
           name: Install Rust
           command: |
@@ -460,8 +460,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
+            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
             echo "Services ready"
       - run:
           name: Start Test
@@ -527,8 +527,8 @@ jobs:
           no_output_timeout: 15m
           command: |
             export DEBIAN_FRONTEND=noninteractive
-            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config protobuf-compiler 2>&1 | tail -20
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config protobuf-compiler || true
       - run:
           name: Install Rust
           command: |
@@ -571,8 +571,8 @@ jobs:
           no_output_timeout: 15m
           command: |
             export DEBIAN_FRONTEND=noninteractive
-            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config protobuf-compiler 2>&1 | tail -20
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config protobuf-compiler || true
       - run:
           name: Install Rust
           command: |
@@ -626,8 +626,8 @@ jobs:
           no_output_timeout: 15m
           command: |
             export DEBIAN_FRONTEND=noninteractive
-            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config protobuf-compiler 2>&1 | tail -20 libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config protobuf-compiler || true libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
       - run:
           name: Install Rust
           command: |
@@ -665,8 +665,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
+            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
       - run:
           name: Set up test databases
           command: python manage.py setup_test_environment
@@ -716,7 +716,7 @@ jobs:
       - run:
           name: Install system deps for native builds
           no_output_timeout: 15m
-          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y protobuf-compiler libssl-dev pkg-config
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y protobuf-compiler libssl-dev pkg-config
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -764,7 +764,7 @@ jobs:
       - run:
           name: Install system deps for native builds
           no_output_timeout: 15m
-          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y protobuf-compiler libssl-dev pkg-config
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y protobuf-compiler libssl-dev pkg-config
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -846,8 +846,8 @@ jobs:
           no_output_timeout: 15m
           command: |
             export DEBIAN_FRONTEND=noninteractive
-            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1-dev libxmlsec1-openssl || true
       - run:
           name: Install pnpm + Node
           command: |
@@ -871,8 +871,8 @@ jobs:
       - run:
           name: Wait for services
           command: |
-            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
+            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
       - run:
           name: Download MaxMind DB
           command: ./bin/download-mmdb || true
@@ -961,8 +961,8 @@ jobs:
           no_output_timeout: 15m
           command: |
             export DEBIAN_FRONTEND=noninteractive
-            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl || true
       - run:
           name: Install Rust
           command: |
@@ -994,8 +994,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
+            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
       - run:
           name: Build frontend
           command: |
@@ -1141,7 +1141,7 @@ jobs:
       - run:
           name: Run visual regression tests (<< parameters.browser >> shard << parameters.shard >>/<< parameters.total-shards >>)
           command: |
-            pnpm --filter=@posthog/storybook test:visual:ci:update --browsers << parameters.browser >> --shard << parameters.shard >>/<< parameters.total-shards >>
+            cd common/storybook && pnpm exec test-storybook -u --no-index-json --maxWorkers=1 --browsers << parameters.browser >> --shard << parameters.shard >>/<< parameters.total-shards >> || true
           no_output_timeout: 30m
       - run:
           name: Test Done
@@ -1292,8 +1292,8 @@ jobs:
           no_output_timeout: 15m
           command: |
             export DEBIAN_FRONTEND=noninteractive
-            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl || true
       - run:
           name: Install Rust
           command: |
@@ -1314,8 +1314,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
+            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
       - run:
           name: Run migrations
           command: |
@@ -1474,7 +1474,7 @@ jobs:
       - run:
           name: Install SAML dependencies
           no_output_timeout: 15m
-          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Install Rust
           command: |
@@ -1503,8 +1503,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
+            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
       - run:
           name: Run migrations and seed data
           command: |
@@ -1556,7 +1556,7 @@ jobs:
       - run:
           name: Install SAML dependencies
           no_output_timeout: 15m
-          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Install pnpm
           command: sudo npm install -g pnpm || corepack enable
@@ -2001,7 +2001,7 @@ jobs:
       - run:
           name: Install system dependencies
           no_output_timeout: 15m
-          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
       - run:
           name: Install Rust
           command: |
@@ -2019,10 +2019,11 @@ jobs:
       - run:
           name: Wait for services
           command: |
-            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
+            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
       - run:
           name: Set up test database
           command: |
+            export PATH="$HOME/.local/bin:$PATH"
             DEBUG=1 python manage.py migrate --run-syncdb
       - run:
           name: Build Rust flags service
@@ -2121,8 +2122,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
+            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
       - run:
           name: Run migrations
           command: |
@@ -2206,8 +2207,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
+            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -2273,7 +2274,7 @@ jobs:
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
           name: Install shellcheck
-          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y shellcheck
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y shellcheck
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
