@@ -32,7 +32,7 @@ jobs:
           command: echo "JOB_START_SYSBENCH=$(date +%s%N)"
       - run:
           name: Install sysbench
-          command: sudo apt-get update && sudo apt-get install -y sysbench
+          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y sysbench
       - run:
           name: System Info
           command: |
@@ -114,8 +114,9 @@ jobs:
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install SAML dependencies
+          no_output_timeout: 15m
           command: |
-            sudo apt-get update
+            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
             sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
       - restore_cache:
           keys:
@@ -328,8 +329,9 @@ jobs:
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install SAML dependencies
+          no_output_timeout: 15m
           command: |
-            sudo apt-get update
+            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
             sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Start Install
@@ -417,8 +419,9 @@ jobs:
           command: uv python install 3.12
       - run:
           name: Install SAML dependencies
+          no_output_timeout: 15m
           command: |
-            sudo apt-get update
+            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
             sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Install Rust
@@ -454,8 +457,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 120 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 120 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
+            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
             echo "Services ready"
       - run:
           name: Start Test
@@ -518,8 +521,9 @@ jobs:
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
           name: Install system dependencies
+          no_output_timeout: 15m
           command: |
-            sudo apt-get update
+            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
             sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - run:
           name: Install Rust
@@ -560,8 +564,9 @@ jobs:
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
           name: Install system dependencies
+          no_output_timeout: 15m
           command: |
-            sudo apt-get update
+            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
             sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - run:
           name: Install Rust
@@ -610,11 +615,12 @@ jobs:
           name: Start Docker services
           command: |
             COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
-          no_output_timeout: 5m
+          no_output_timeout: 10m
       - run:
           name: Install system dependencies
+          no_output_timeout: 15m
           command: |
-            sudo apt-get update
+            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
             sudo apt-get install -y libssl-dev pkg-config protobuf-compiler libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
       - run:
           name: Install Rust
@@ -653,8 +659,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 120 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 120 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
+            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
       - run:
           name: Set up test databases
           command: python manage.py setup_test_environment
@@ -703,7 +709,8 @@ jobs:
             echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install system deps for native builds
-          command: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+          no_output_timeout: 15m
+          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -750,7 +757,8 @@ jobs:
             echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install system deps for native builds
-          command: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+          no_output_timeout: 15m
+          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -813,7 +821,7 @@ jobs:
           name: Start Docker services
           command: |
             COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
-          no_output_timeout: 5m
+          no_output_timeout: 10m
       - run:
           name: Install uv
           command: |
@@ -829,8 +837,9 @@ jobs:
             echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install system deps
+          no_output_timeout: 15m
           command: |
-            sudo apt-get update
+            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
             sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Install pnpm + Node
@@ -855,8 +864,8 @@ jobs:
       - run:
           name: Wait for services
           command: |
-            timeout 120 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 120 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
+            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
       - run:
           name: Download MaxMind DB
           command: ./bin/download-mmdb || true
@@ -942,8 +951,9 @@ jobs:
           command: uv python install 3.12
       - run:
           name: Install SAML dependencies
+          no_output_timeout: 15m
           command: |
-            sudo apt-get update
+            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
             sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Install Rust
@@ -976,8 +986,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 120 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 120 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
+            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
       - run:
           name: Build frontend
           command: |
@@ -1080,6 +1090,9 @@ jobs:
     resource_class: large.gen2
     environment:
       NODE_OPTIONS: "--max-old-space-size=16384"
+      PNPM_HOME: "/home/circleci/.local/share/pnpm"
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=16384"
       OPT_OUT_CAPTURE: "1"
     steps:
       - run:
@@ -1093,7 +1106,11 @@ jobs:
           at: .
       - run:
           name: Install pnpm
-          command: sudo npm install -g pnpm || corepack enable
+          command: |
+            sudo npm install -g pnpm || corepack enable
+            pnpm setup || true
+            echo 'export PNPM_HOME="/home/circleci/.local/share/pnpm"' >> "$BASH_ENV"
+            echo 'export PATH="$PNPM_HOME:$PATH"' >> "$BASH_ENV"
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -1101,7 +1118,7 @@ jobs:
           name: Install dependencies
           command: |
             pnpm --filter=@posthog/storybook... install --frozen-lockfile
-            pnpm install http-server wait-on -g
+            sudo pnpm install http-server wait-on -g || pnpm install http-server wait-on -g
       - run:
           name: Install Done
           command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
@@ -1266,8 +1283,9 @@ jobs:
           command: uv python install 3.12
       - run:
           name: Install SAML dependencies
+          no_output_timeout: 15m
           command: |
-            sudo apt-get update
+            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
             sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Install Rust
@@ -1289,8 +1307,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 120 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 120 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
+            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
       - run:
           name: Run migrations
           command: |
@@ -1448,7 +1466,8 @@ jobs:
           command: uv python install 3.12
       - run:
           name: Install SAML dependencies
-          command: sudo apt-get update && sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+          no_output_timeout: 15m
+          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Install Rust
           command: |
@@ -1477,8 +1496,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 120 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 120 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
+            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
       - run:
           name: Run migrations and seed data
           command: |
@@ -1529,7 +1548,8 @@ jobs:
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install SAML dependencies
-          command: sudo apt-get update && sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
+          no_output_timeout: 15m
+          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Install pnpm
           command: sudo npm install -g pnpm || corepack enable
@@ -1973,7 +1993,8 @@ jobs:
           command: uv python install 3.12
       - run:
           name: Install system dependencies
-          command: sudo apt-get update && sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
+          no_output_timeout: 15m
+          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
       - run:
           name: Install Rust
           command: |
@@ -1991,7 +2012,7 @@ jobs:
       - run:
           name: Wait for services
           command: |
-            timeout 120 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
+            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
       - run:
           name: Set up test database
           command: |
@@ -2064,7 +2085,7 @@ jobs:
           name: Start Docker services
           command: |
             COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
-          no_output_timeout: 5m
+          no_output_timeout: 10m
       - run:
           name: Install uv
           command: |
@@ -2093,8 +2114,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 120 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 120 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
+            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
       - run:
           name: Run migrations
           command: |
@@ -2149,7 +2170,7 @@ jobs:
           name: Start Docker services
           command: |
             COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
-          no_output_timeout: 5m
+          no_output_timeout: 10m
       - run:
           name: Add service hostnames
           command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
@@ -2178,8 +2199,8 @@ jobs:
       - run:
           name: Wait for Docker services
           command: |
-            timeout 120 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
-            timeout 120 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
+            timeout 180 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready; do sleep 2; done'
+            timeout 180 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -2245,7 +2266,7 @@ jobs:
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
           name: Install shellcheck
-          command: sudo apt-get update && sudo apt-get install -y shellcheck
+          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y shellcheck
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
