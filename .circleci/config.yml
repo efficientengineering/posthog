@@ -2325,6 +2325,42 @@ jobs:
           command: echo "STEP_DONE_TEST=$(date +%s%N)"
 
   # ==========================================================================
+  # ==========================================================================
+  # TEST SELECTION SHADOW — Shadow test selection analysis
+  # ==========================================================================
+  test-selection-shadow:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_TEST_SELECTION_SHADOW=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run shadow test selection
+          command: |
+            git fetch --no-tags origin master
+            uv run tools/snob_backend_test_selection_shadow.py \
+              --base-ref "origin/master" \
+              --pretty \
+              > /tmp/shadow-selection.json || true
+            cat /tmp/shadow-selection.json || echo "No output"
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
   # PHROCS CI — Go TUI tests
   # ==========================================================================
   phrocs-tests:
@@ -2576,3 +2612,8 @@ workflows:
   phrocs-ci:
     jobs:
       - phrocs-tests
+
+  # Test selection shadow workflow
+  test-selection-shadow-ci:
+    jobs:
+      - test-selection-shadow
