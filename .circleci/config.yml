@@ -459,9 +459,22 @@ jobs:
             ./bin/download-mmdb || true
       - run:
           name: Wait for Docker services
+          no_output_timeout: 15m
           command: |
-            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
-            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
             echo "Services ready"
       - run:
           name: Start Test
@@ -619,7 +632,11 @@ jobs:
       - run:
           name: Start Docker services
           command: |
-            COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
+            for attempt in 1 2 3; do
+              COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage && break
+              echo "Attempt $attempt failed, retrying in 10s..."
+              sleep 10
+            done
           no_output_timeout: 10m
       - run:
           name: Install system dependencies
@@ -664,9 +681,22 @@ jobs:
           command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
       - run:
           name: Wait for Docker services
+          no_output_timeout: 15m
           command: |
-            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
-            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
       - run:
           name: Set up test databases
           command: python manage.py setup_test_environment
@@ -826,7 +856,11 @@ jobs:
       - run:
           name: Start Docker services
           command: |
-            COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
+            for attempt in 1 2 3; do
+              COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage && break
+              echo "Attempt $attempt failed, retrying in 10s..."
+              sleep 10
+            done
           no_output_timeout: 10m
       - run:
           name: Install uv
@@ -870,9 +904,22 @@ jobs:
           command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
       - run:
           name: Wait for services
+          no_output_timeout: 15m
           command: |
-            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
-            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
       - run:
           name: Download MaxMind DB
           command: ./bin/download-mmdb || true
@@ -993,9 +1040,22 @@ jobs:
             ./bin/download-mmdb || true
       - run:
           name: Wait for Docker services
+          no_output_timeout: 15m
           command: |
-            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
-            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
       - run:
           name: Build frontend
           command: |
@@ -1313,9 +1373,22 @@ jobs:
           command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
       - run:
           name: Wait for Docker services
+          no_output_timeout: 15m
           command: |
-            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
-            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
       - run:
           name: Run migrations
           command: |
@@ -1502,9 +1575,22 @@ jobs:
             touch frontend/dist/index.html frontend/dist/layout.html frontend/dist/exporter.html
       - run:
           name: Wait for Docker services
+          no_output_timeout: 15m
           command: |
-            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
-            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
       - run:
           name: Run migrations and seed data
           command: |
@@ -2018,8 +2104,15 @@ jobs:
           command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
       - run:
           name: Wait for services
+          no_output_timeout: 15m
           command: |
-            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
       - run:
           name: Set up test database
           command: |
@@ -2092,7 +2185,11 @@ jobs:
       - run:
           name: Start Docker services
           command: |
-            COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
+            for attempt in 1 2 3; do
+              COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage && break
+              echo "Attempt $attempt failed, retrying in 10s..."
+              sleep 10
+            done
           no_output_timeout: 10m
       - run:
           name: Install uv
@@ -2121,9 +2218,22 @@ jobs:
           command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
       - run:
           name: Wait for Docker services
+          no_output_timeout: 15m
           command: |
-            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
-            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
       - run:
           name: Run migrations
           command: |
@@ -2177,7 +2287,11 @@ jobs:
       - run:
           name: Start Docker services
           command: |
-            COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
+            for attempt in 1 2 3; do
+              COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage && break
+              echo "Attempt $attempt failed, retrying in 10s..."
+              sleep 10
+            done
           no_output_timeout: 10m
       - run:
           name: Add service hostnames
@@ -2206,9 +2320,22 @@ jobs:
           command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
       - run:
           name: Wait for Docker services
+          no_output_timeout: 15m
           command: |
-            timeout 300 bash -c 'until docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; do sleep 3; done' || (docker compose -f docker-compose.dev.yml ps; docker compose -f docker-compose.dev.yml logs db --tail=20; exit 1)
-            timeout 300 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 3; done' || (docker compose -f docker-compose.dev.yml logs clickhouse --tail=20; exit 1)
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
