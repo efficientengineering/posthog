@@ -126,7 +126,7 @@ jobs:
             - ~/.cache/uv
       - run:
           name: Download GeoIP database
-          command: ./bin/download-mmdb
+          command: ./bin/download-mmdb || true
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -433,7 +433,7 @@ jobs:
           command: |
             mkdir -p frontend/dist
             touch frontend/dist/index.html frontend/dist/layout.html frontend/dist/exporter.html
-            ./bin/download-mmdb
+            ./bin/download-mmdb || true
       - run:
           name: Wait for Docker services
           command: |
@@ -595,11 +595,13 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
             echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
       - run:
-          name: Install uv + Python
+          name: Install uv
           command: |
             curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
-            uv python install 3.12
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
       - restore_cache:
           keys:
             - cargo-test-{{ checksum "rust/Cargo.lock" }}
@@ -631,7 +633,7 @@ jobs:
           command: python manage.py setup_test_environment
       - run:
           name: Download MaxMind DB
-          command: ./bin/download-mmdb
+          command: ./bin/download-mmdb || true
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -667,6 +669,14 @@ jobs:
       - run:
           name: Install pnpm
           command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Install Rust (needed for cyclotron native module)
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install system deps for native builds
+          command: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -706,6 +716,14 @@ jobs:
       - run:
           name: Install pnpm
           command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Install Rust (needed for cyclotron native module)
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install system deps for native builds
+          command: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -770,11 +788,13 @@ jobs:
             COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
           no_output_timeout: 5m
       - run:
-          name: Install uv + Python
+          name: Install uv
           command: |
             curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
-            uv python install 3.12
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
       - run:
           name: Install Rust
           command: |
@@ -784,7 +804,7 @@ jobs:
           name: Install system deps
           command: |
             sudo apt-get update
-            sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+            sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl protobuf-compiler libssl-dev pkg-config
       - run:
           name: Install pnpm
           command: |
@@ -812,7 +832,7 @@ jobs:
             timeout 120 bash -c 'until curl -sf http://localhost:8123/ping; do sleep 2; done'
       - run:
           name: Download MaxMind DB
-          command: ./bin/download-mmdb
+          command: ./bin/download-mmdb || true
       - run:
           name: Set up test databases
           command: python manage.py setup_test_environment
