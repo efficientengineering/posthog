@@ -1091,8 +1091,6 @@ jobs:
     environment:
       NODE_OPTIONS: "--max-old-space-size=16384"
       PNPM_HOME: "/home/circleci/.local/share/pnpm"
-    environment:
-      NODE_OPTIONS: "--max-old-space-size=16384"
       OPT_OUT_CAPTURE: "1"
     steps:
       - run:
