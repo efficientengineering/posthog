@@ -32,7 +32,7 @@ jobs:
           command: echo "JOB_START_SYSBENCH=$(date +%s%N)"
       - run:
           name: Install sysbench
-          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y sysbench
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y sysbench
       - run:
           name: System Info
           command: |
@@ -116,8 +116,9 @@ jobs:
           name: Install SAML dependencies
           no_output_timeout: 15m
           command: |
-            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
-            sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
       - restore_cache:
           keys:
             - uv-python-{{ checksum "uv.lock" }}
@@ -331,8 +332,9 @@ jobs:
           name: Install SAML dependencies
           no_output_timeout: 15m
           command: |
-            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
-            sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -421,8 +423,9 @@ jobs:
           name: Install SAML dependencies
           no_output_timeout: 15m
           command: |
-            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
-            sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
       - run:
           name: Install Rust
           command: |
@@ -523,8 +526,9 @@ jobs:
           name: Install system dependencies
           no_output_timeout: 15m
           command: |
-            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
-            sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config protobuf-compiler 2>&1 | tail -20
       - run:
           name: Install Rust
           command: |
@@ -566,8 +570,9 @@ jobs:
           name: Install system dependencies
           no_output_timeout: 15m
           command: |
-            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
-            sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config protobuf-compiler 2>&1 | tail -20
       - run:
           name: Install Rust
           command: |
@@ -620,8 +625,9 @@ jobs:
           name: Install system dependencies
           no_output_timeout: 15m
           command: |
-            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
-            sudo apt-get install -y libssl-dev pkg-config protobuf-compiler libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config protobuf-compiler 2>&1 | tail -20 libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
       - run:
           name: Install Rust
           command: |
@@ -710,7 +716,7 @@ jobs:
       - run:
           name: Install system deps for native builds
           no_output_timeout: 15m
-          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y protobuf-compiler libssl-dev pkg-config
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -758,7 +764,7 @@ jobs:
       - run:
           name: Install system deps for native builds
           no_output_timeout: 15m
-          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y protobuf-compiler libssl-dev pkg-config
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -839,8 +845,9 @@ jobs:
           name: Install system deps
           no_output_timeout: 15m
           command: |
-            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
-            sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
       - run:
           name: Install pnpm + Node
           command: |
@@ -953,8 +960,9 @@ jobs:
           name: Install SAML dependencies
           no_output_timeout: 15m
           command: |
-            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
-            sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
       - run:
           name: Install Rust
           command: |
@@ -1283,8 +1291,9 @@ jobs:
           name: Install SAML dependencies
           no_output_timeout: 15m
           command: |
-            for i in 1 2 3; do sudo apt-get update && break || sleep 10; done
-            sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl 2>&1 | tail -20
       - run:
           name: Install Rust
           command: |
@@ -1465,7 +1474,7 @@ jobs:
       - run:
           name: Install SAML dependencies
           no_output_timeout: 15m
-          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Install Rust
           command: |
@@ -1547,7 +1556,7 @@ jobs:
       - run:
           name: Install SAML dependencies
           no_output_timeout: 15m
-          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
       - run:
           name: Install pnpm
           command: sudo npm install -g pnpm || corepack enable
@@ -1992,7 +2001,7 @@ jobs:
       - run:
           name: Install system dependencies
           no_output_timeout: 15m
-          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client
       - run:
           name: Install Rust
           command: |
@@ -2264,7 +2273,7 @@ jobs:
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
           name: Install shellcheck
-          command: for i in 1 2 3; do sudo apt-get update && break || sleep 10; done && sudo apt-get install -y shellcheck
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 2>&1 | tail -5 && sudo -E apt-get install -y shellcheck
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
