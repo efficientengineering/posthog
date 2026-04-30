@@ -1069,6 +1069,12 @@ jobs:
     parameters:
       shard:
         type: integer
+      browser:
+        type: string
+        default: "chromium"
+      total-shards:
+        type: integer
+        default: 16
     docker:
       - image: cimg/node:lts-browsers
     resource_class: large.gen2
@@ -1110,9 +1116,9 @@ jobs:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
       - run:
-          name: Run visual regression tests (shard << parameters.shard >>/4)
+          name: Run visual regression tests (<< parameters.browser >> shard << parameters.shard >>/<< parameters.total-shards >>)
           command: |
-            pnpm --filter=@posthog/storybook test:visual:ci:update --browsers chromium --shard << parameters.shard >>/4
+            pnpm --filter=@posthog/storybook test:visual:ci:update --browsers << parameters.browser >> --shard << parameters.shard >>/<< parameters.total-shards >>
           no_output_timeout: 30m
       - run:
           name: Test Done
@@ -2429,16 +2435,28 @@ workflows:
     jobs:
       - e2e-playwright
 
-  # Storybook workflow (build + 4-shard visual regression)
+  # Storybook workflow (build + 20-shard visual regression: 16 Chromium + 4 WebKit)
   storybook-ci:
     jobs:
       - storybook-build
       - storybook-visual-regression:
+          name: storybook-vr-chromium-<< matrix.shard >>
+          requires:
+            - storybook-build
+          matrix:
+            parameters:
+              shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+              browser: ["chromium"]
+              total-shards: [16]
+      - storybook-visual-regression:
+          name: storybook-vr-webkit-<< matrix.shard >>
           requires:
             - storybook-build
           matrix:
             parameters:
               shard: [1, 2, 3, 4]
+              browser: ["webkit"]
+              total-shards: [4]
 
   # Container images workflow
   container-images-ci:
