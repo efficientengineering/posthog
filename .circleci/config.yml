@@ -144,16 +144,16 @@ jobs:
           command: echo "STEP_START_TEST=$(date +%s%N)"
       - run:
           name: Ruff check
-          command: ruff check .
+          command: uv run ruff check .
       - run:
           name: Ruff format check
-          command: ruff format --check --diff .
+          command: uv run ruff format --check --diff .
       - run:
           name: Mypy type checking
-          command: mypy --cache-fine-grained . || true
+          command: uv run mypy --cache-fine-grained . || true
       - run:
           name: Run hogli tests
-          command: pytest common/hogli/tests/ -v --junitxml=junit-hogli.xml || true
+          command: uv run pytest common/hogli/tests/ -v --junitxml=junit-hogli.xml || true
       - run:
           name: Test Done
           command: echo "STEP_DONE_TEST=$(date +%s%N)"
@@ -352,7 +352,7 @@ jobs:
           command: echo "STEP_START_TEST=$(date +%s%N)"
       - run:
           name: Run HogVM Python tests
-          command: pytest common/hogvm || true
+          command: uv run pytest common/hogvm || true
       - run:
           name: Install HogVM JS deps
           command: pnpm --filter=@posthog/hogvm install --frozen-lockfile
@@ -495,7 +495,7 @@ jobs:
             if [ "<< parameters.person-on-events >>" = "true" ]; then
               export PERSON_ON_EVENTS_V2_ENABLED=true
             fi
-            python -m pytest -v --tb=short \
+            uv run python -m pytest -v --tb=short \
               $PYTEST_TARGETS \
               $PYTEST_MARK \
               $PYTEST_IGNORE \
@@ -699,7 +699,7 @@ jobs:
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
       - run:
           name: Set up test databases
-          command: python manage.py setup_test_environment
+          command: uv run python manage.py setup_test_environment
       - run:
           name: Download MaxMind DB
           command: ./bin/download-mmdb || true
@@ -925,7 +925,7 @@ jobs:
           command: ./bin/download-mmdb || true
       - run:
           name: Set up test databases
-          command: python manage.py setup_test_environment
+          command: uv run python manage.py setup_test_environment
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -1066,21 +1066,21 @@ jobs:
           name: Collect static files
           command: |
             cp frontend/node_modules/@posthog/rrweb/dist/image-bitmap-data-url-worker-*.js.map frontend/dist/ || true
-            python manage.py collectstatic --noinput
+            uv run python manage.py collectstatic --noinput
       - run:
           name: Create test database and run migrations
           command: |
             createdb posthog_e2e_test || echo "Database already exists"
-            python manage.py migrate --noinput
-            python manage.py migrate_clickhouse 2>&1
-            python manage.py setup_dev
+            uv run python manage.py migrate --noinput
+            uv run python manage.py migrate_clickhouse 2>&1
+            uv run python manage.py setup_dev
       - run:
           name: Install Playwright browsers
           command: pnpm --filter=@posthog/playwright exec playwright install chromium --with-deps
       - run:
           name: Start PostHog web and workers
           command: |
-            python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
+            uv run python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
             python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --log-level debug --workers 2 &> /tmp/server.log &
           no_output_timeout: 3m
       - run:
@@ -1392,8 +1392,8 @@ jobs:
       - run:
           name: Run migrations
           command: |
-            python manage.py migrate
-            python manage.py migrate_clickhouse
+            uv run python manage.py migrate
+            uv run python manage.py migrate_clickhouse
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -1594,13 +1594,13 @@ jobs:
       - run:
           name: Run migrations and seed data
           command: |
-            python manage.py migrate --noinput
-            python manage.py migrate_clickhouse
-            python manage.py generate_demo_data --n-clusters 10 --days-past 7 --days-future 0 --skip-materialization --skip-flag-sync --skip-user-product-list || true
+            uv run python manage.py migrate --noinput
+            uv run python manage.py migrate_clickhouse
+            uv run python manage.py generate_demo_data --n-clusters 10 --days-past 7 --days-future 0 --skip-materialization --skip-flag-sync --skip-user-product-list || true
       - run:
           name: Start PostHog web
           command: |
-            python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
+            uv run python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
             python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --workers 1 &> /tmp/server.log &
           no_output_timeout: 3m
       - run:
@@ -2116,8 +2116,7 @@ jobs:
       - run:
           name: Set up test database
           command: |
-            export PATH="$HOME/.local/bin:$PATH"
-            DEBUG=1 python manage.py migrate --run-syncdb
+            DEBUG=1 uv run python manage.py migrate --run-syncdb
       - run:
           name: Build Rust flags service
           command: cd rust && RUSTFLAGS='-C debug-assertions=no' cargo build -p feature-flags
@@ -2144,7 +2143,7 @@ jobs:
               sleep 2
             done
             cd /home/circleci/project
-            DEBUG=1 TEST=0 python manage.py runserver 127.0.0.1:8000 --noreload &
+            DEBUG=1 TEST=0 uv run python manage.py runserver 127.0.0.1:8000 --noreload &
             for i in $(seq 1 15); do
               if curl -s http://127.0.0.1:8000/_health > /dev/null 2>&1; then
                 echo "Django ready"; break
@@ -2237,8 +2236,8 @@ jobs:
       - run:
           name: Run migrations
           command: |
-            python manage.py migrate --noinput
-            python manage.py setup_dev --no-data || true
+            uv run python manage.py migrate --noinput
+            uv run python manage.py setup_dev --no-data || true
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -2341,7 +2340,7 @@ jobs:
           command: echo "STEP_START_TEST=$(date +%s%N)"
       - run:
           name: Run AI evals (<< parameters.group >>)
-          command: EVAL_MODE=ci pytest << parameters.test-paths >> -vv --junitxml=junit.xml || true
+          command: EVAL_MODE=ci uv run pytest << parameters.test-paths >> -vv --junitxml=junit.xml || true
           no_output_timeout: 45m
       - run:
           name: Test Done
