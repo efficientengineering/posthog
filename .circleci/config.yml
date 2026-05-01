@@ -483,28 +483,30 @@ jobs:
           name: Run Django << parameters.segment >> tests (shard << parameters.group >>/<< parameters.concurrency >>)
           command: |
             set +e
-            PYTEST_TARGETS="posthog ee/"
-            PYTEST_IGNORE=""
-            PYTEST_MARK=""
             if [ "<< parameters.segment >>" = "Core" ]; then
-              PYTEST_IGNORE="--ignore=posthog/temporal --ignore=posthog/dags --ignore=common/hogvm/python/test"
-              PYTEST_MARK="-m 'not async_migrations'"
+              if [ "<< parameters.person-on-events >>" = "true" ]; then
+                export PERSON_ON_EVENTS_V2_ENABLED=true
+              fi
+              uv run python -m pytest -v --tb=short \
+                posthog ee/ \
+                -m "not async_migrations" \
+                --ignore=posthog/temporal --ignore=posthog/dags --ignore=common/hogvm/python/test \
+                --splits << parameters.concurrency >> --group << parameters.group >> \
+                --durations=100 --durations-min=1.0 \
+                --splitting-algorithm=duration_based_chunks \
+                --reruns 1 --reruns-delay 1 \
+                -r fEsxX \
+                --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
             elif [ "<< parameters.segment >>" = "Temporal" ]; then
-              PYTEST_TARGETS="posthog/temporal"
+              uv run python -m pytest -v --tb=short \
+                posthog/temporal \
+                --splits << parameters.concurrency >> --group << parameters.group >> \
+                --durations=100 --durations-min=1.0 \
+                --splitting-algorithm=duration_based_chunks \
+                --reruns 1 --reruns-delay 1 \
+                -r fEsxX \
+                --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
             fi
-            if [ "<< parameters.person-on-events >>" = "true" ]; then
-              export PERSON_ON_EVENTS_V2_ENABLED=true
-            fi
-            uv run python -m pytest -v --tb=short \
-              $PYTEST_TARGETS \
-              $PYTEST_MARK \
-              $PYTEST_IGNORE \
-              --splits << parameters.concurrency >> --group << parameters.group >> \
-              --durations=100 --durations-min=1.0 \
-              --splitting-algorithm=duration_based_chunks \
-              --reruns 1 --reruns-delay 1 \
-              -r fEsxX \
-              --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
             exit_code=$?
             set -e
             if [ $exit_code -eq 5 ]; then
