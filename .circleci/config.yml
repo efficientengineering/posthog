@@ -1767,7 +1767,7 @@ jobs:
           name: Start PostHog web
           command: |
             uv run python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
-            python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --workers 1 &> /tmp/server.log &
+            uv run python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --workers 1 &> /tmp/server.log &
           no_output_timeout: 3m
       - run:
           name: Wait for PostHog
