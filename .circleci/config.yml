@@ -118,7 +118,7 @@ jobs:
           command: |
             export DEBIAN_FRONTEND=noninteractive
             sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
       - restore_cache:
           keys:
             - uv-python-{{ checksum "uv.lock" }}
@@ -334,7 +334,7 @@ jobs:
           command: |
             export DEBIAN_FRONTEND=noninteractive
             sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
@@ -439,7 +439,7 @@ jobs:
           command: |
             export DEBIAN_FRONTEND=noninteractive
             sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
       - run:
           name: Install Rust
           command: |
@@ -1155,7 +1155,7 @@ jobs:
           command: |
             export DEBIAN_FRONTEND=noninteractive
             sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
       - run:
           name: Install Rust
           command: |
@@ -1514,7 +1514,7 @@ jobs:
           command: |
             export DEBIAN_FRONTEND=noninteractive
             sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
       - run:
           name: Install Rust
           command: |
