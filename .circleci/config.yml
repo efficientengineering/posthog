@@ -414,7 +414,15 @@ jobs:
       - run:
           name: Start Docker services
           command: |
-            cp posthog/user_scripts/latest_user_defined_function.xml docker/clickhouse/user_defined_function.xml || true
+            python3 -c "
+            import re
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
+            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
+            " || true
             COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch
           no_output_timeout: 5m
       - run:
@@ -1025,14 +1033,18 @@ jobs:
           name: Download MaxMind DB
           command: ./bin/download-mmdb || true
       - run:
-          name: Create test databases (test_posthog, test_persons, test_behavioral_cohorts)
+          name: Create test databases (test_behavioral_cohorts)
           command: |
-            for db in test_posthog test_persons test_behavioral_cohorts; do
-              docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE $db;" 2>&1 | grep -v "already exists" || true
-            done
+            docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE test_behavioral_cohorts;" 2>&1 | grep -v "already exists" || true
       - run:
-          name: Set up test databases
-          command: uv run python manage.py setup_test_environment
+          name: Set up test databases (mirrors GHA pnpm setup:test slow path)
+          environment:
+            DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog"
+            BEHAVIORAL_COHORTS_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_behavioral_cohorts"
+            TEST: "true"
+          command: |
+            pnpm --filter=@posthog/nodejs setup:test
+            cd nodejs && pnpm run setup:test:persons-parity
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -1095,7 +1107,15 @@ jobs:
       - run:
           name: Start Docker services
           command: |
-            cp posthog/user_scripts/latest_user_defined_function.xml docker/clickhouse/user_defined_function.xml || true
+            python3 -c "
+            import re
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
+            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
+            " || true
             docker compose -f docker-compose.dev.yml down || true
             docker compose -f docker-compose.dev.yml up -d
           no_output_timeout: 5m
@@ -1450,7 +1470,15 @@ jobs:
       - run:
           name: Start Docker services
           command: |
-            cp posthog/user_scripts/latest_user_defined_function.xml docker/clickhouse/user_defined_function.xml || true
+            python3 -c "
+            import re
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
+            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
+            " || true
             COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch
           no_output_timeout: 5m
       - run:
@@ -1650,7 +1678,15 @@ jobs:
       - run:
           name: Start Docker services
           command: |
-            cp posthog/user_scripts/latest_user_defined_function.xml docker/clickhouse/user_defined_function.xml || true
+            python3 -c "
+            import re
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
+            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
+            " || true
             docker compose -f docker-compose.dev.yml down || true
             docker compose -f docker-compose.dev.yml up -d
           no_output_timeout: 5m
