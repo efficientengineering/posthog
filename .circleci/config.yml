@@ -409,7 +409,7 @@ jobs:
           name: Start Docker services
           command: |
             cp posthog/user_scripts/latest_user_defined_function.xml docker/clickhouse/user_defined_function.xml || true
-            COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
+            COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch
           no_output_timeout: 5m
       - run:
           name: Install uv
@@ -475,6 +475,13 @@ jobs:
               sleep 5
             done
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
             echo "Services ready"
       - run:
           name: Start Test
@@ -635,7 +642,7 @@ jobs:
           name: Start Docker services
           command: |
             for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage && break
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
               echo "Attempt $attempt failed, retrying in 10s..."
               sleep 10
             done
@@ -699,6 +706,13 @@ jobs:
               sleep 5
             done
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
       - run:
           name: Set up test databases
           command: uv run python manage.py setup_test_environment
@@ -859,7 +873,7 @@ jobs:
           name: Start Docker services
           command: |
             for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage && break
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
               echo "Attempt $attempt failed, retrying in 10s..."
               sleep 10
             done
@@ -922,6 +936,13 @@ jobs:
               sleep 5
             done
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
       - run:
           name: Download MaxMind DB
           command: ./bin/download-mmdb || true
@@ -1058,6 +1079,13 @@ jobs:
               sleep 5
             done
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
       - run:
           name: Build frontend
           command: |
@@ -1339,7 +1367,7 @@ jobs:
           name: Start Docker services
           command: |
             cp posthog/user_scripts/latest_user_defined_function.xml docker/clickhouse/user_defined_function.xml || true
-            COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage
+            COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch
           no_output_timeout: 5m
       - run:
           name: Install uv
@@ -1391,6 +1419,13 @@ jobs:
               sleep 5
             done
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
       - run:
           name: Run migrations
           command: |
@@ -1593,6 +1628,13 @@ jobs:
               sleep 5
             done
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
       - run:
           name: Run migrations and seed data
           command: |
@@ -2187,7 +2229,7 @@ jobs:
           name: Start Docker services
           command: |
             for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage && break
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
               echo "Attempt $attempt failed, retrying in 10s..."
               sleep 10
             done
@@ -2235,6 +2277,13 @@ jobs:
               sleep 5
             done
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
       - run:
           name: Run migrations
           command: |
@@ -2289,7 +2338,7 @@ jobs:
           name: Start Docker services
           command: |
             for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage && break
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
               echo "Attempt $attempt failed, retrying in 10s..."
               sleep 10
             done
@@ -2337,6 +2386,13 @@ jobs:
               sleep 5
             done
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
