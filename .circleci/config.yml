@@ -401,6 +401,12 @@ jobs:
       - run:
           name: Job Start
           command: echo "JOB_START_DJANGO_<< parameters.segment >>_<< parameters.group >>=$(date +%s%N)"
+      - run:
+          name: Generate test RSA key for OIDC (mirrors GHA OIDC_RSA_FAKE_PRIVATE_KEY var)
+          command: |
+            openssl genrsa -out /tmp/oidc_rsa.pem 2048 2>/dev/null
+            echo 'export OIDC_RSA_PRIVATE_KEY="$(cat /tmp/oidc_rsa.pem)"' >> "$BASH_ENV"
+            echo 'export SANDBOX_JWT_PRIVATE_KEY="$(cat /tmp/oidc_rsa.pem)"' >> "$BASH_ENV"
       - checkout
       - run:
           name: Checkout Done
@@ -916,7 +922,10 @@ jobs:
       OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
       OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
       SECRET_KEY: "abcdef"
-      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog"
+      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_posthog"
+      PERSONS_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_persons"
+      PERSONS_READONLY_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_persons"
+      BEHAVIORAL_COHORTS_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_behavioral_cohorts"
       TEST: "1"
     steps:
       - run:
@@ -1015,6 +1024,12 @@ jobs:
       - run:
           name: Download MaxMind DB
           command: ./bin/download-mmdb || true
+      - run:
+          name: Create test databases (test_posthog, test_persons, test_behavioral_cohorts)
+          command: |
+            for db in test_posthog test_persons test_behavioral_cohorts; do
+              docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE $db;" 2>&1 | grep -v "already exists" || true
+            done
       - run:
           name: Set up test databases
           command: uv run python manage.py setup_test_environment
