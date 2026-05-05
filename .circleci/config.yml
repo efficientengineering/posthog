@@ -989,6 +989,21 @@ jobs:
           command: |
             npm install -g pnpm || curl -fsSL https://get.pnpm.io/install.sh | sh -
             echo 'export PATH="$HOME/.local/share/pnpm:$PATH"' >> "$BASH_ENV"
+      - restore_cache:
+          keys:
+            - sqlx-cli-v0.8.3-{{ arch }}
+      - run:
+          name: Install sqlx-cli (used by setup:test:rust migrate-entry)
+          command: |
+            if [ ! -x "$HOME/.cargo/bin/sqlx" ]; then
+              cargo install sqlx-cli --version 0.8.3 --no-default-features --features native-tls,postgres
+            else
+              echo "sqlx already installed: $($HOME/.cargo/bin/sqlx --version)"
+            fi
+      - save_cache:
+          key: sqlx-cli-v0.8.3-{{ arch }}
+          paths:
+            - ~/.cargo/bin/sqlx
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
