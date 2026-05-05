@@ -1043,6 +1043,8 @@ jobs:
             BEHAVIORAL_COHORTS_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_behavioral_cohorts"
             TEST: "true"
           command: |
+            # pnpm setup:test invokes `python manage.py …` directly; activate the uv venv so it finds Django
+            source .venv/bin/activate
             pnpm --filter=@posthog/nodejs setup:test
             cd nodejs && pnpm run setup:test:persons-parity
       - run:
