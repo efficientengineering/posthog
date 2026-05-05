@@ -1068,6 +1068,8 @@ jobs:
       - run:
           name: Run Node.js tests (shard << parameters.shard >>/3)
           command: |
+            # Jest forks subprocesses that invoke `python …`; activate uv venv so they find Django
+            source .venv/bin/activate
             export DATABASE_URL='postgres://posthog:posthog@localhost:5432/test_posthog'
             export NODE_OPTIONS='--max_old_space_size=4096'
             export SHARD_INDEX=<< parameters.shard >>
