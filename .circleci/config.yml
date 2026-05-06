@@ -1262,16 +1262,22 @@ jobs:
       - run:
           name: Install Playwright browsers
           command: pnpm --filter=@posthog/playwright exec playwright install chromium --with-deps
+          no_output_timeout: 20m
       - run:
           name: Start PostHog web and workers
           command: |
             uv run python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
-            python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --log-level debug --workers 2 &> /tmp/server.log &
+            uv run python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --log-level debug --workers 2 &> /tmp/server.log &
           no_output_timeout: 3m
       - run:
           name: Wait for PostHog to be ready
           command: |
-            timeout 180 bash -c 'until curl -sf http://localhost:8000; do sleep 2; done'
+            if ! timeout 360 bash -c 'until curl -sf http://localhost:8000; do sleep 2; done'; then
+              echo "=== PostHog server failed to start; dumping logs ==="
+              echo "--- /tmp/server.log ---"; tail -200 /tmp/server.log 2>/dev/null || echo "(no server log)"
+              echo "--- /tmp/celery.log ---"; tail -200 /tmp/celery.log 2>/dev/null || echo "(no celery log)"
+              exit 1
+            fi
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
