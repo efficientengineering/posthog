@@ -946,10 +946,10 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services
+          name: Start Docker services (with localstack for KMS/DynamoDB tests)
           command: |
             for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure,dev_tools,localstack docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch localstack && break
               echo "Attempt $attempt failed, retrying in 10s..."
               sleep 10
             done
@@ -1077,6 +1077,7 @@ jobs:
             export SHARD_INDEX=<< parameters.shard >>
             export SHARD_COUNT=3
             export LOG_LEVEL=info
+            export LOCALSTACK_ENABLED=1
             bin/turbo run test --filter=@posthog/nodejs
           no_output_timeout: 30m
       - run:
