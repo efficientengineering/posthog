@@ -520,26 +520,29 @@ jobs:
           name: Run Django << parameters.segment >> tests (shard << parameters.group >>/<< parameters.concurrency >>)
           command: |
             set +e
-            # Mirror GHA: POE matrix runs with --snapshot-update --snapshot-warn-unused.
-            # GHA comment in ci-backend.yml: "persons-on-events: always update — we ignore snapshot divergence there".
-            # Without this, our CCI POE shards strict-compare and fail on benign POE-vs-non-POE query form differences.
-            POE_PYTEST_ARGS=""
-            if [ "<< parameters.person-on-events >>" = "true" ]; then
-              POE_PYTEST_ARGS="--snapshot-update --snapshot-warn-unused"
-            fi
+            # Mirror GHA POE matrix exactly:
+            # 1. --snapshot-update --snapshot-warn-unused (GHA: "we ignore snapshot divergence there")
+            # 2. --ignore=posthog/hogql_queries --ignore=posthog/hogql (GHA POE matrix excludes these dirs)
+            # 3. Different test path subset (GHA POE matrix runs a focused subset)
             if [ "<< parameters.segment >>" = "Core" ]; then
               if [ "<< parameters.person-on-events >>" = "true" ]; then
                 export PERSON_ON_EVENTS_V2_ENABLED=true
+                # GHA POE matrix test paths
+                TEST_PATHS="posthog/clickhouse posthog/queries posthog/api/test/test_insight posthog/api/test/dashboards/test_dashboard.py ee/clickhouse"
+                POE_PYTEST_ARGS="--snapshot-update --snapshot-warn-unused --ignore=posthog/hogql_queries --ignore=posthog/hogql"
+              else
+                TEST_PATHS="posthog ee/"
+                POE_PYTEST_ARGS=""
               fi
               uv run python -m pytest -v --tb=short \
-                posthog ee/ \
+                $TEST_PATHS \
                 -m "not async_migrations" \
                 --ignore=posthog/temporal --ignore=posthog/dags --ignore=common/hogvm/python/test \
+                $POE_PYTEST_ARGS \
                 --splits << parameters.concurrency >> --group << parameters.group >> \
                 --durations=100 --durations-min=1.0 \
                 --splitting-algorithm=duration_based_chunks \
                 --reruns 1 --reruns-delay 1 \
-                $POE_PYTEST_ARGS \
                 -r fEsxX \
                 --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
             elif [ "<< parameters.segment >>" = "Temporal" ]; then
@@ -954,10 +957,10 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services (with localstack for KMS/DynamoDB tests)
+          name: Start Docker services (with localstack + maildev for KMS/email tests)
           command: |
             for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure,dev_tools,localstack docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch localstack && break
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure,dev_tools,localstack docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch localstack maildev && break
               echo "Attempt $attempt failed, retrying in 10s..."
               sleep 10
             done
