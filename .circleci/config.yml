@@ -395,6 +395,7 @@ jobs:
       OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
       OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
       OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
       UV_HTTP_TIMEOUT: "120"
       DISPLAY: ":99.0"
     steps:
@@ -929,6 +930,7 @@ jobs:
       OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
       OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
       OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
       SECRET_KEY: "abcdef"
       DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_posthog"
       PERSONS_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_persons"
@@ -1108,6 +1110,7 @@ jobs:
       OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
       OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
       OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
       CELERY_METRICS_PORT: "8999"
       CLOUD_DEPLOYMENT: "E2E"
       PGHOST: "localhost"
@@ -1477,6 +1480,7 @@ jobs:
       OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
       OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
       OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
       DISPLAY: ":99.0"
     steps:
       - run:
@@ -1682,6 +1686,7 @@ jobs:
       OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
       OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
       OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
       OPT_OUT_CAPTURE: "1"
       SKIP_SERVICE_VERSION_REQUIREMENTS: "1"
       NO_RESTART_LOOP: "1"
@@ -2483,6 +2488,7 @@ jobs:
       OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
       OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
       OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
     steps:
       - run:
           name: Job Start
