@@ -520,6 +520,13 @@ jobs:
           name: Run Django << parameters.segment >> tests (shard << parameters.group >>/<< parameters.concurrency >>)
           command: |
             set +e
+            # Mirror GHA: POE matrix runs with --snapshot-update --snapshot-warn-unused.
+            # GHA comment in ci-backend.yml: "persons-on-events: always update — we ignore snapshot divergence there".
+            # Without this, our CCI POE shards strict-compare and fail on benign POE-vs-non-POE query form differences.
+            POE_PYTEST_ARGS=""
+            if [ "<< parameters.person-on-events >>" = "true" ]; then
+              POE_PYTEST_ARGS="--snapshot-update --snapshot-warn-unused"
+            fi
             if [ "<< parameters.segment >>" = "Core" ]; then
               if [ "<< parameters.person-on-events >>" = "true" ]; then
                 export PERSON_ON_EVENTS_V2_ENABLED=true
@@ -532,6 +539,7 @@ jobs:
                 --durations=100 --durations-min=1.0 \
                 --splitting-algorithm=duration_based_chunks \
                 --reruns 1 --reruns-delay 1 \
+                $POE_PYTEST_ARGS \
                 -r fEsxX \
                 --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
             elif [ "<< parameters.segment >>" = "Temporal" ]; then
