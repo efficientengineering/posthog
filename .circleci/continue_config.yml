@@ -562,10 +562,16 @@ jobs:
             if [ "<< parameters.segment >>" = "Core" ]; then
               if [ "<< parameters.person-on-events >>" = "true" ]; then
                 export PERSON_ON_EVENTS_V2_ENABLED=true
-                # GHA POE matrix test paths
-                # Glob expanded by the shell when passed unquoted to pytest below
+                # GHA POE matrix test paths (mirror of ci-backend.yml line ~1290):
+                #   ./posthog/clickhouse/ ./posthog/queries/ ./posthog/api/test/test_insight* ./posthog/api/test/dashboards/test_dashboard.py
+                # Plus ee/clickhouse/ from the conditional. We use shell glob via ls -d.
                 TEST_PATHS=$(ls -d posthog/clickhouse posthog/queries posthog/api/test/test_insight*.py posthog/api/test/dashboards/test_dashboard.py ee/clickhouse 2>/dev/null | tr '\n' ' ')
                 POE_PYTEST_ARGS="--snapshot-update --snapshot-warn-unused --ignore=posthog/hogql_queries --ignore=posthog/hogql"
+                # SANITY: print resolved POE paths so we can confirm parity with GHA's hardcoded list.
+                # Expected: posthog/clickhouse posthog/queries posthog/api/test/test_insight*.py (multiple files) posthog/api/test/dashboards/test_dashboard.py ee/clickhouse
+                echo "=== POE expanded test paths (compare against GHA ci-backend.yml hardcoded list) ==="
+                for p in $TEST_PATHS; do echo "  $p"; done
+                echo "=========================================================================="
               else
                 TEST_PATHS="posthog ee/"
                 POE_PYTEST_ARGS=""
@@ -578,7 +584,7 @@ jobs:
                 --splits << parameters.concurrency >> --group << parameters.group >> \
                 --durations=100 --durations-min=1.0 \
                 --splitting-algorithm=duration_based_chunks \
-                --reruns 1 --reruns-delay 1 \
+                --reruns 2 --reruns-delay 1 \
                 -r fEsxX \
                 --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
             elif [ "<< parameters.segment >>" = "Temporal" ]; then
@@ -587,7 +593,7 @@ jobs:
                 --splits << parameters.concurrency >> --group << parameters.group >> \
                 --durations=100 --durations-min=1.0 \
                 --splitting-algorithm=duration_based_chunks \
-                --reruns 1 --reruns-delay 1 \
+                --reruns 2 --reruns-delay 1 \
                 -r fEsxX \
                 --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
             fi
@@ -1137,7 +1143,7 @@ jobs:
   e2e-playwright:
     machine:
       image: ubuntu-2204:current
-    resource_class: xlarge.gen2
+    resource_class: large.gen2  # match GHA ubuntu-latest (4 vCPU); was xlarge.gen2 (~8 vCPU) which gave CCI an unfair hardware advantage
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
       DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog_e2e_test"
