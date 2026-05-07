@@ -548,7 +548,7 @@ jobs:
                 $POE_PYTEST_ARGS \
                 --splits << parameters.concurrency >> --group << parameters.group >> \
                 --durations=100 --durations-min=1.0 \
-                --splitting-algorithm=duration_based_chunks \
+                --splitting-algorithm=least_duration \
                 --reruns 2 --reruns-delay 1 \
                 -r fEsxX \
                 --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
@@ -557,7 +557,7 @@ jobs:
                 posthog/temporal \
                 --splits << parameters.concurrency >> --group << parameters.group >> \
                 --durations=100 --durations-min=1.0 \
-                --splitting-algorithm=duration_based_chunks \
+                --splitting-algorithm=least_duration \
                 --reruns 2 --reruns-delay 1 \
                 -r fEsxX \
                 --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
