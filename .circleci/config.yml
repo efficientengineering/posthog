@@ -1261,8 +1261,14 @@ jobs:
             uv run python manage.py setup_dev
       - run:
           name: Install Playwright browsers
-          command: pnpm --filter=@posthog/playwright exec playwright install chromium --with-deps
-          no_output_timeout: 20m
+          command: |
+            # --with-deps runs apt-get; needrestart (Ubuntu 22.04) opens an interactive dialog when
+            # libraries change. NEEDRESTART_MODE=a auto-restarts daemons without prompting.
+            export DEBIAN_FRONTEND=noninteractive
+            export NEEDRESTART_MODE=a
+            export NEEDRESTART_SUSPEND=1
+            pnpm --filter=@posthog/playwright exec playwright install chromium --with-deps
+          no_output_timeout: 15m
       - run:
           name: Start PostHog web and workers
           command: |
