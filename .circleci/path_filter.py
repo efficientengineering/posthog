@@ -184,14 +184,51 @@ FILTERS = {
         "cli/**",
         ".github/workflows/ci-cli.yml",
     ],
+    # ci-migrations-service-separation-check.yml — uses 4 filters:
     "migrations": [
         "posthog/migrations/*.py",
         "posthog/clickhouse/migrations/*.py",
         "products/*/backend/migrations/*.py",
         "ee/migrations/*.py",
+    ],
+    "sqlx_migrations": [
         "rust/persons_migrations/*.sql",
         "rust/behavioral_cohorts_migrations/*.sql",
         "rust/cyclotron-core/migrations/*.sql",
+    ],
+    "rust_services": [
+        "rust/**",
+        "!rust/persons_migrations/**",
+        "!rust/behavioral_cohorts_migrations/**",
+        "!rust/cyclotron-core/migrations/**",
+    ],
+    # ci-backend.yml inner filters — gate specific check jobs inside Backend CI:
+    "backend_migrations": [
+        "docker/clickhouse/**",
+        "posthog/migrations/*.py",
+        "products/*/backend/migrations/*.py",
+        "products/*/migrations/*.py",
+        "rust/persons_migrations/*.sql",
+        "ee/migrations/*.py",
+    ],
+    "openapi_types": [
+        "frontend/src/generated/**",
+        "products/*/frontend/generated/**",
+        "services/mcp/src/generated/**",
+        "services/mcp/src/api/generated.ts",
+        "tools/openapi-codegen/**",
+    ],
+    "tasks_temporal": [
+        "products/tasks/backend/temporal/**",
+    ],
+    # ci-storybook.yml — split between general frontend vs auto-generated frontend
+    "frontend_generated": [
+        "frontend/src/generated/**",
+        "products/**/frontend/generated/**",
+    ],
+    # ci-hobby.yml — separate filter for hobby installer
+    "hobby_installer": [
+        "bin/hobby-installer/**",
     ],
     # Workflows that always run on every PR (no path filter on GHA)
     "always_run": ["**"],
@@ -266,6 +303,7 @@ def main():
             "run-turbo-ci", "run-test-selection-shadow-ci",
             "run-container-images-ci", "run-migrations-check-ci",
             "run-django", "run-rust", "run-nodejs", "run-frontend",
+            "run-openapi-types", "run-frontend-generated", "run-hobby-installer",
         )}
     else:
         backend = filter_matches(FILTERS["backend"], changed)
@@ -298,6 +336,10 @@ def main():
             "run-proto-ci": filter_matches(FILTERS["proto"], changed),
             "run-agent-skills-ci": filter_matches(FILTERS["agent_skills"], changed),
             "run-migrations-check-ci": filter_matches(FILTERS["migrations"], changed),
+            # Finer-grained gating for split workflows
+            "run-openapi-types": filter_matches(FILTERS["openapi_types"], changed),
+            "run-frontend-generated": filter_matches(FILTERS["frontend_generated"], changed),
+            "run-hobby-installer": filter_matches(FILTERS["hobby_installer"], changed),
             # Always-run workflows (no GHA path filter)
             "run-ai-ci": True,
             "run-shellcheck-ci": True,

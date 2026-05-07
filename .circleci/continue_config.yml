@@ -9,11 +9,16 @@ version: 2.1
 parameters:
   # Per-workflow run flags — set by the path-filter setup job in config.yml.
   # Defaults to true so this config is still valid if invoked directly without setup.
+  # Composite — kept for backwards compatibility; not gated on directly anymore.
   run-posthog-ci:               { type: boolean, default: true }
+  # Granular flags — match GHA's per-filter granularity inside ci-backend.yml etc.
   run-django:                   { type: boolean, default: true }
   run-rust:                     { type: boolean, default: true }
   run-nodejs:                   { type: boolean, default: true }
   run-frontend:                 { type: boolean, default: true }
+  run-openapi-types:            { type: boolean, default: true }
+  run-frontend-generated:       { type: boolean, default: true }
+  run-hobby-installer:          { type: boolean, default: true }
   run-e2e-playwright-ci:        { type: boolean, default: true }
   run-storybook-ci:             { type: boolean, default: true }
   run-mcp-ci:                   { type: boolean, default: true }
@@ -2847,30 +2852,21 @@ jobs:
 # ---------------------------------------------------------------------------
 
 workflows:
-  # Original workflows (sysbench, python, frontend, hog, backend, rust, nodejs)
-  # Gated on run-posthog-ci which is true if any of django/rust/nodejs/frontend changed.
-  posthog-ci:
-    when: << pipeline.parameters.run-posthog-ci >>
+  # ========================================================================
+  # Sysbench — synthetic hardware benchmark, runs every pipeline regardless
+  # ========================================================================
+  sysbench-ci:
     jobs:
-      # Sysbench
       - sysbench
 
-      # Python CI
+  # ========================================================================
+  # Backend CI — Django tests (mirrors GHA ci-backend.yml `backend` filter)
+  # Triggers when Python/Django files change.
+  # ========================================================================
+  backend-ci:
+    when: << pipeline.parameters.run-django >>
+    jobs:
       - python-code-quality
-
-      # Frontend CI
-      - frontend-format
-      - frontend-typescript
-      - jest:
-          matrix:
-            parameters:
-              segment: ["FOSS", "EE"]
-              chunk: [1, 2]
-
-      # Hog CI
-      - hog-tests
-
-      # Backend Django tests - Full matrix (38 Core + 7 Core-POE + 7 Temporal = 52)
       - django-tests:
           name: django-core-<< matrix.group >>
           matrix:
@@ -2896,7 +2892,29 @@ workflows:
               segment: ["Temporal"]
               person-on-events: [false]
 
-      # Rust CI (8 shards)
+  # ========================================================================
+  # Frontend CI — TypeScript + Jest (mirrors GHA ci-frontend.yml + ci-hog.yml)
+  # Triggers when frontend/products TS files change.
+  # ========================================================================
+  frontend-ci:
+    when: << pipeline.parameters.run-frontend >>
+    jobs:
+      - frontend-format
+      - frontend-typescript
+      - jest:
+          matrix:
+            parameters:
+              segment: ["FOSS", "EE"]
+              chunk: [1, 2]
+      - hog-tests
+
+  # ========================================================================
+  # Rust CI — Build + Lint + Test shards (mirrors GHA ci-rust.yml)
+  # Triggers when rust/** or proto/** changes.
+  # ========================================================================
+  rust-ci:
+    when: << pipeline.parameters.run-rust >>
+    jobs:
       - rust-build
       - rust-lint
       - rust-test:
@@ -2912,7 +2930,13 @@ workflows:
                 - "personhog-coordination personhog-leader personhog-replica personhog-router"
                 - "posthog-symbol-data property-defs-rs serve-metrics batch-import-worker assignment-coordination"
 
-      # Node.js CI
+  # ========================================================================
+  # Node.js CI — Lint + Build + Test shards (mirrors GHA ci-nodejs.yml)
+  # Triggers when nodejs/** changes.
+  # ========================================================================
+  nodejs-ci:
+    when: << pipeline.parameters.run-nodejs >>
+    jobs:
       - nodejs-lint
       - nodejs-build
       - nodejs-test:
