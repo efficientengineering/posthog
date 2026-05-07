@@ -1430,7 +1430,8 @@ jobs:
           name: Install dependencies
           command: |
             pnpm --filter=@posthog/storybook... install --frozen-lockfile
-            sudo pnpm install http-server wait-on -g || pnpm install http-server wait-on -g
+            # Use npm for global utilities — pnpm exits non-zero when PNPM_HOME isn't in root's PATH
+            sudo npm install -g http-server wait-on
       - run:
           name: Install Done
           command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
