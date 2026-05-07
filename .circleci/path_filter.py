@@ -141,12 +141,56 @@ FILTERS = {
         "bin/deploy-hobby",
         "bin/hobby-ci.py",
     ],
+    # ci-hog.yml — internal `hog` filter
     "hog": [
         "common/hogvm/**",
         "posthog/hogql/**",
         "bin/hog",
         "bin/hoge",
         "package.json",
+        "requirements.txt",
+        "requirements-dev.txt",
+        ".github/workflows/ci-hog.yml",
+    ],
+    # ci-python.yml — internal `python` filter (broader than ci-backend's `backend`)
+    "python": [
+        "pyproject.toml",
+        "uv.lock",
+        "ee/**/*.py",
+        "posthog/**",
+        "products/**/*.py",
+        ".github/workflows/ci-python.yml",
+        ".github/workflows/ci-dagster.yml",
+        ".github/workflows/ci-backend.yml",
+        ".flox/env/manifest.toml",
+        "bin/check_uv_python_compatibility.py",
+        "frontend/src/queries/schema.json",
+        "frontend/src/products.json",
+        "common/hogli/**",
+        "bin/**",
+        "services/llm-gateway/**/*.py",
+        ".github/scripts/**/*.py",
+        "tools/pr-approval-agent/**",
+    ],
+    # ci-recording-rasterizer-container.yml — internal `rasterizer_files` filter
+    "rasterizer_files": [
+        "nodejs/**",
+        "common/hogvm/typescript/**",
+        "common/plugin_transpiler/**",
+        "common/esbuilder/**",
+        "common/replay-shared/**",
+        "common/replay-headless/**",
+        "rust/cyclotron-node/**",
+        "rust/cyclotron-core/**",
+        "Dockerfile.recording-rasterizer",
+        ".github/workflows/ci-recording-rasterizer-container.yml",
+        "bin/turbo",
+        "patches/**",
+        "turbo.json",
+        "tsconfig.json",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
     ],
     "agent_skills": [
         "products/*/skills/**",
@@ -304,6 +348,7 @@ def main():
             "run-container-images-ci", "run-migrations-check-ci",
             "run-django", "run-rust", "run-nodejs", "run-frontend",
             "run-openapi-types", "run-frontend-generated", "run-hobby-installer",
+            "run-python-ci", "run-hog-ci", "run-recording-rasterizer-ci",
         )}
     else:
         backend = filter_matches(FILTERS["backend"], changed)
@@ -340,6 +385,10 @@ def main():
             "run-openapi-types": filter_matches(FILTERS["openapi_types"], changed),
             "run-frontend-generated": filter_matches(FILTERS["frontend_generated"], changed),
             "run-hobby-installer": filter_matches(FILTERS["hobby_installer"], changed),
+            # Standalone workflows that mirror ci-python.yml, ci-hog.yml, ci-recording-rasterizer-container.yml
+            "run-python-ci": filter_matches(FILTERS["python"], changed),
+            "run-hog-ci": filter_matches(FILTERS["hog"], changed),
+            "run-recording-rasterizer-ci": filter_matches(FILTERS["rasterizer_files"], changed),
             # Always-run workflows (no GHA path filter)
             "run-ai-ci": True,
             "run-shellcheck-ci": True,

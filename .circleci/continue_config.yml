@@ -19,6 +19,9 @@ parameters:
   run-openapi-types:            { type: boolean, default: true }
   run-frontend-generated:       { type: boolean, default: true }
   run-hobby-installer:          { type: boolean, default: true }
+  run-python-ci:                { type: boolean, default: true }
+  run-hog-ci:                   { type: boolean, default: true }
+  run-recording-rasterizer-ci:  { type: boolean, default: true }
   run-e2e-playwright-ci:        { type: boolean, default: true }
   run-storybook-ci:             { type: boolean, default: true }
   run-mcp-ci:                   { type: boolean, default: true }
@@ -2326,6 +2329,34 @@ jobs:
           command: echo "STEP_DONE_TEST=$(date +%s%N)"
 
   # ==========================================================================
+  # RECORDING RASTERIZER CONTAINER — Docker build (mirrors GHA ci-recording-rasterizer-container.yml)
+  # GHA runs this on rasterizer_files paths (nodejs/**, common/replay-shared/**, cyclotron, etc.).
+  # We build (no push) to measure equivalent CCI compute.
+  # ==========================================================================
+  recording-rasterizer-build:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_RECORDING_RASTERIZER=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Build recording-rasterizer container image
+          command: docker build -f Dockerfile.recording-rasterizer -t posthog-recording-rasterizer:ci . || true
+          no_output_timeout: 30m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
   # RUST FLAGS INTEGRATION — Feature flags integration tests
   # ==========================================================================
   rust-flags-integration:
@@ -2860,13 +2891,30 @@ workflows:
       - sysbench
 
   # ========================================================================
+  # Python CI — mirrors GHA ci-python.yml (Python lint, broader than ci-backend)
+  # Triggers on Python files plus shared config (pyproject.toml, schema.json, etc.)
+  # ========================================================================
+  python-ci:
+    when: << pipeline.parameters.run-python-ci >>
+    jobs:
+      - python-code-quality
+
+  # ========================================================================
+  # Hog CI — mirrors GHA ci-hog.yml (HogVM tests)
+  # Triggers when hogvm/hogql files change.
+  # ========================================================================
+  hog-ci:
+    when: << pipeline.parameters.run-hog-ci >>
+    jobs:
+      - hog-tests
+
+  # ========================================================================
   # Backend CI — Django tests (mirrors GHA ci-backend.yml `backend` filter)
   # Triggers when Python/Django files change.
   # ========================================================================
   backend-ci:
     when: << pipeline.parameters.run-django >>
     jobs:
-      - python-code-quality
       - django-tests:
           name: django-core-<< matrix.group >>
           matrix:
@@ -2906,7 +2954,6 @@ workflows:
             parameters:
               segment: ["FOSS", "EE"]
               chunk: [1, 2]
-      - hog-tests
 
   # ========================================================================
   # Rust CI — Build + Lint + Test shards (mirrors GHA ci-rust.yml)
@@ -3053,6 +3100,12 @@ workflows:
     when: << pipeline.parameters.run-nodejs-container-ci >>
     jobs:
       - nodejs-container-build
+
+  # Recording rasterizer container workflow (mirrors GHA ci-recording-rasterizer-container.yml)
+  recording-rasterizer-ci:
+    when: << pipeline.parameters.run-recording-rasterizer-ci >>
+    jobs:
+      - recording-rasterizer-build
 
   # Rust flags integration workflow
   rust-flags-integration-ci:
