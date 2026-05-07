@@ -1144,7 +1144,7 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services
+          name: Start Docker services (capture+temporal+ingestion stack to mirror GHA e2e)
           command: |
             python3 -c "
             import re
@@ -1155,9 +1155,12 @@ jobs:
             open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
             print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
             " || true
-            docker compose -f docker-compose.dev.yml down || true
-            docker compose -f docker-compose.dev.yml up -d
-          no_output_timeout: 5m
+            # GHA e2e-playwright starts capture+temporal+ingestion stack: plugins + 6 ingestion workers + maildev for password reset emails
+            docker compose -f docker-compose.dev.yml -f docker-compose.profiles.yml down || true
+            COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=capture,temporal,ingestion docker compose up -d \
+              db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch maildev \
+              plugins ingestion-general ingestion-sessionreplay recording-api ingestion-error-tracking ingestion-logs ingestion-traces
+          no_output_timeout: 8m
       - run:
           name: Add service hostnames
           command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
