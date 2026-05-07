@@ -16,7 +16,7 @@ on:
     workflow_dispatch:
     push:
         branches:
-            - benchmark/sysbench
+            - benchmark/sysbench-sweep
 
 concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
