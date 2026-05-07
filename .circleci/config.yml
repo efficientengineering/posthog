@@ -1,5 +1,6 @@
 # PostHog CI — CircleCI Mirror for Benchmarking
 # Mirrors ALL PostHog GHA CI workflows (30 workflows, ~48 jobs)
+# Clean benchmark run trigger: 2026-05-07
 version: 2.1
 
 # ---------------------------------------------------------------------------
