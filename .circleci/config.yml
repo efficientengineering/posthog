@@ -1274,9 +1274,13 @@ jobs:
             pnpm --filter=@posthog/playwright exec playwright install chromium --with-deps
           no_output_timeout: 15m
       - run:
-          name: Start PostHog web and workers
+          name: Start PostHog web, Celery worker, Temporal worker (mirror GHA e2e)
           command: |
+            # Source celery-queues.env so the worker consumes 'exports' queue (needed for CSV/XLSX export tests)
+            source ./bin/celery-queues.env
+            export CELERY_WORKER_QUEUES
             uv run python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
+            uv run python manage.py start_temporal_worker --task-queue analytics-platform-task-queue &> /tmp/temporal-worker.log &
             uv run python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --log-level debug --workers 2 &> /tmp/server.log &
           no_output_timeout: 3m
       - run:
