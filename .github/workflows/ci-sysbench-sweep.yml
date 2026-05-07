@@ -1,0 +1,111 @@
+# Sysbench sweep across every GHA runner label PostHog uses.
+#
+# Drop this file into .github/workflows/ on `efficientengineering/posthog`
+# and run via `workflow_dispatch` (or push to `benchmark/sysbench`).
+# Each job runs the SAME sysbench commands as the CCI sysbench job in
+# .circleci/config.yml, so output is byte-for-byte comparable.
+#
+# Why one job per runner label (not a matrix): GHA does not allow
+# `runs-on` to be templated from a matrix value reliably across all
+# runner providers — Depot and Blacksmith resolve labels at queue time.
+# Static `runs-on:` per job avoids surprises and gives one log per runner.
+
+name: Sysbench Sweep
+
+on:
+    workflow_dispatch:
+    push:
+        branches:
+            - benchmark/sysbench
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: false
+
+permissions:
+    contents: read
+
+jobs:
+    # =========================================================================
+    # GitHub-hosted (stock) runners
+    # =========================================================================
+    sysbench-ubuntu-latest:
+        name: sysbench / github-hosted ubuntu-latest
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - uses: ./.github/actions/sysbench-run
+              with:
+                  runner_label: ubuntu-latest
+
+    sysbench-ubuntu-2404:
+        name: sysbench / github-hosted ubuntu-24.04
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        steps:
+            - uses: ./.github/actions/sysbench-run
+              with:
+                  runner_label: ubuntu-24.04
+
+    # =========================================================================
+    # Depot.dev managed runners
+    # =========================================================================
+    sysbench-depot-ubuntu-latest:
+        name: sysbench / depot-ubuntu-latest
+        runs-on: depot-ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - uses: ./.github/actions/sysbench-run
+              with:
+                  runner_label: depot-ubuntu-latest
+
+    sysbench-depot-ubuntu-latest-4:
+        name: sysbench / depot-ubuntu-latest-4
+        runs-on: depot-ubuntu-latest-4
+        timeout-minutes: 30
+        steps:
+            - uses: ./.github/actions/sysbench-run
+              with:
+                  runner_label: depot-ubuntu-latest-4
+
+    sysbench-depot-ubuntu-latest-16:
+        name: sysbench / depot-ubuntu-latest-16
+        runs-on: depot-ubuntu-latest-16
+        timeout-minutes: 30
+        steps:
+            - uses: ./.github/actions/sysbench-run
+              with:
+                  runner_label: depot-ubuntu-latest-16
+
+    sysbench-depot-ubuntu-2404-4:
+        name: sysbench / depot-ubuntu-24.04-4
+        runs-on: depot-ubuntu-24.04-4
+        timeout-minutes: 30
+        steps:
+            - uses: ./.github/actions/sysbench-run
+              with:
+                  runner_label: depot-ubuntu-24.04-4
+
+    # =========================================================================
+    # Blacksmith.sh managed runners (gated by BLACKSMITH_SHADOW_ENABLED to
+    # match the existing shadow workflow's gating; flip the var to run them)
+    # =========================================================================
+    sysbench-blacksmith-2vcpu:
+        name: sysbench / blacksmith-2vcpu-ubuntu-2404
+        runs-on: blacksmith-2vcpu-ubuntu-2404
+        if: vars.BLACKSMITH_SHADOW_ENABLED == 'true'
+        timeout-minutes: 30
+        steps:
+            - uses: ./.github/actions/sysbench-run
+              with:
+                  runner_label: blacksmith-2vcpu-ubuntu-2404
+
+    sysbench-blacksmith-4vcpu:
+        name: sysbench / blacksmith-4vcpu-ubuntu-2404
+        runs-on: blacksmith-4vcpu-ubuntu-2404
+        if: vars.BLACKSMITH_SHADOW_ENABLED == 'true'
+        timeout-minutes: 30
+        steps:
+            - uses: ./.github/actions/sysbench-run
+              with:
+                  runner_label: blacksmith-4vcpu-ubuntu-2404

@@ -1,0 +1,95 @@
+# Composite action: run the sysbench suite that mirrors the CCI sysbench job.
+# Drop into .github/actions/sysbench-run/action.yml on the PostHog fork.
+#
+# IMPORTANT: commands here must stay byte-for-byte identical to the
+# `sysbench` job in .circleci/config.yml so cross-platform numbers compare.
+# Only the wrapper YAML differs.
+
+name: 'Run sysbench suite'
+description: 'Runs the standard PostHog sysbench suite and prints labeled BENCH_*  ns timestamps'
+inputs:
+    runner_label:
+        description: 'Free-form label echoed into the log so the parser knows which runner produced this output'
+        required: true
+
+runs:
+    using: 'composite'
+    steps:
+        - name: Job Start
+          shell: bash
+          run: |
+              echo "JOB_START_SYSBENCH=$(date +%s%N)"
+              echo "RUNNER_LABEL=${{ inputs.runner_label }}"
+
+        - name: Install sysbench
+          shell: bash
+          run: sudo apt-get update && sudo apt-get install -y sysbench
+
+        - name: System Info
+          shell: bash
+          run: |
+              echo "=== CPU ==="
+              lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|Socket|MHz' || true
+              echo "=== Memory ==="
+              free -h
+              echo "=== Disk ==="
+              df -h .
+              echo "=== Kernel ==="
+              uname -r
+              echo "=== Cloud metadata (best-effort) ==="
+              # Try a couple of common metadata endpoints — non-fatal.
+              curl -s --max-time 1 http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null && echo || true
+              cat /sys/class/dmi/id/product_name 2>/dev/null || true
+              cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true
+
+        - name: CPU Benchmark
+          shell: bash
+          run: |
+              echo "BENCH_START_CPU=$(date +%s%N)"
+              sysbench cpu --cpu-max-prime=20000 --threads=2 --time=30 run
+              echo "BENCH_DONE_CPU=$(date +%s%N)"
+
+        - name: Memory Write Benchmark
+          shell: bash
+          run: |
+              echo "BENCH_START_MEM_WRITE=$(date +%s%N)"
+              sysbench memory --memory-block-size=1K --memory-total-size=10G --memory-oper=write --threads=2 --time=30 run
+              echo "BENCH_DONE_MEM_WRITE=$(date +%s%N)"
+
+        - name: Memory Read Benchmark
+          shell: bash
+          run: |
+              echo "BENCH_START_MEM_READ=$(date +%s%N)"
+              sysbench memory --memory-block-size=1K --memory-total-size=10G --memory-oper=read --threads=2 --time=30 run
+              echo "BENCH_DONE_MEM_READ=$(date +%s%N)"
+
+        - name: File IO Sequential Write
+          shell: bash
+          run: |
+              echo "BENCH_START_FILEIO_SEQWR=$(date +%s%N)"
+              sysbench fileio --file-total-size=1G --file-num=4 prepare
+              sysbench fileio --file-total-size=1G --file-num=4 --file-test-mode=seqwr --threads=2 --time=30 run
+              sysbench fileio --file-total-size=1G --file-num=4 cleanup
+              echo "BENCH_DONE_FILEIO_SEQWR=$(date +%s%N)"
+
+        - name: File IO Sequential Read
+          shell: bash
+          run: |
+              echo "BENCH_START_FILEIO_SEQRD=$(date +%s%N)"
+              sysbench fileio --file-total-size=1G --file-num=4 prepare
+              sysbench fileio --file-total-size=1G --file-num=4 --file-test-mode=seqrd --threads=2 --time=30 run
+              sysbench fileio --file-total-size=1G --file-num=4 cleanup
+              echo "BENCH_DONE_FILEIO_SEQRD=$(date +%s%N)"
+
+        - name: File IO Random Read/Write
+          shell: bash
+          run: |
+              echo "BENCH_START_FILEIO_RNDRW=$(date +%s%N)"
+              sysbench fileio --file-total-size=1G --file-num=4 prepare
+              sysbench fileio --file-total-size=1G --file-num=4 --file-test-mode=rndrw --threads=2 --time=30 run
+              sysbench fileio --file-total-size=1G --file-num=4 cleanup
+              echo "BENCH_DONE_FILEIO_RNDRW=$(date +%s%N)"
+
+        - name: Job Done
+          shell: bash
+          run: echo "JOB_DONE_SYSBENCH=$(date +%s%N)"
