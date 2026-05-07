@@ -1143,7 +1143,7 @@ jobs:
   e2e-playwright:
     machine:
       image: ubuntu-2204:current
-    resource_class: large.gen2  # match GHA ubuntu-latest (4 vCPU); was xlarge.gen2 (~8 vCPU) which gave CCI an unfair hardware advantage
+    resource_class: 2xlarge.gen2  # match GHA depot-ubuntu-latest-16 (16 vCPU). Earlier change to large.gen2 was based on incorrect assumption that GHA used ubuntu-latest; the actual playwright job uses depot-ubuntu-latest-16 (comment in ci-e2e-playwright.yml: "Runner size is tuned to avoid CPU scheduling contention").
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
       DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog_e2e_test"
