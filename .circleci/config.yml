@@ -523,22 +523,22 @@ jobs:
           # in .test_durations (recorded on a faster runner). With duration_based_chunks
           # this caused the entire ee/hogai/ tree to clump onto one shard (worst-case
           # 52min vs 18min median). Multiplying ee/hogai/ entries by 7 makes the
-          # chunker spread that directory across 3-4 contiguous shards instead of one,
+          # chunker spread that directory across ~9 contiguous shards instead of one,
           # without disturbing test ordering (so snapshot/materialization tests still
           # see their dependent tests on the same shard).
+          # NOTE: heredoc avoided because '<<' clashes with CCI parameter syntax.
           command: |
-            python3 - <<'PY'
+            python3 -c "
             import json, pathlib
-            p = pathlib.Path(".test_durations")
+            p = pathlib.Path('.test_durations')
             d = json.loads(p.read_text())
-            n = 0
+            n = sum(1 for k in d if k.startswith('ee/hogai/'))
             for k in list(d.keys()):
-                if k.startswith("ee/hogai/"):
+                if k.startswith('ee/hogai/'):
                     d[k] = d[k] * 7.0
-                    n += 1
             p.write_text(json.dumps(d, indent=4))
-            print(f"Calibrated {n} ee/hogai/ entries (multiplied by 7x)")
-            PY
+            print(f'Calibrated {n} ee/hogai/ entries (multiplied by 7x)')
+            "
       - run:
           name: Run Django << parameters.segment >> tests (shard << parameters.group >>/<< parameters.concurrency >>)
           command: |
