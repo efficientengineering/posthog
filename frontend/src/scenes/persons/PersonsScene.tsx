@@ -1,0 +1,145 @@
+import { useActions, useAsyncActions, useValues } from 'kea'
+
+import { IconRewind } from '@posthog/icons'
+import { LemonDialog, LemonInput } from '@posthog/lemon-ui'
+
+import { useOnMountEffect } from 'lib/hooks/useOnMountEffect'
+import { LemonField } from 'lib/lemon-ui/LemonField'
+import { Link } from 'lib/lemon-ui/Link'
+import { ButtonPrimitive } from 'lib/ui/Button/ButtonPrimitives'
+import { PersonsManagementSceneTabs } from 'scenes/persons-management/PersonsManagementSceneTabs'
+import { sceneConfigurations } from 'scenes/scenes'
+import { Scene, SceneExport } from 'scenes/sceneTypes'
+import { teamLogic } from 'scenes/teamLogic'
+import { urls } from 'scenes/urls'
+
+import { SceneContent } from '~/layout/scenes/components/SceneContent'
+import { SceneTitleSection } from '~/layout/scenes/components/SceneTitleSection'
+import { ScenePanel, ScenePanelActionsSection } from '~/layout/scenes/SceneLayout'
+import { Query } from '~/queries/Query/Query'
+import { ProductKey } from '~/queries/schema/schema-general'
+import { CustomerProfileScope, OnboardingStepKey } from '~/types'
+
+import { FeedbackButton } from 'products/customer_analytics/frontend/components/FeedbackButton'
+import { PersonDisplayNameNudgeBanner } from 'products/customer_analytics/frontend/components/PersonDisplayNameNudgeBanner'
+import { customerProfileConfigLogic } from 'products/customer_analytics/frontend/customerProfileConfigLogic'
+
+import { personsSceneLogic } from './personsSceneLogic'
+
+export const scene: SceneExport = {
+    component: PersonsScene,
+    logic: personsSceneLogic,
+    productKey: ProductKey.PRODUCT_ANALYTICS,
+}
+
+export function PersonsScene({ tabId }: { tabId?: string } = {}): JSX.Element {
+    if (!tabId) {
+        // TODO: sometimes when opening a property filter on a scene, the tabId is suddently empty.
+        // If I remove the "{closable && !disabledReason && ...}" block from within
+        // "frontend/src/lib/components/PropertyFilters/components/PropertyFilterButton.tsx"
+        // ... then the issue goes away. We should still figure out why this happens.
+        // Throwing seems to make it go away.
+        throw new Error('PersonsScene rendered with no tabId')
+    }
+
+    const { query } = useValues(personsSceneLogic)
+    const { setQuery } = useActions(personsSceneLogic)
+    const { resetDeletedDistinctId } = useAsyncActions(personsSceneLogic)
+    const { currentTeam, baseCurrency } = useValues(teamLogic)
+    const { loadConfigs } = useActions(customerProfileConfigLogic({ scope: CustomerProfileScope.PERSON }))
+    const queryUniqueKey = `persons-query-${tabId}`
+
+    useOnMountEffect(() => {
+        loadConfigs()
+    })
+
+    return (
+        <SceneContent>
+            <PersonsManagementSceneTabs tabKey="persons" />
+
+            <SceneTitleSection
+                name={sceneConfigurations[Scene.Persons].name}
+                description={sceneConfigurations[Scene.Persons].description}
+                resourceType={{
+                    type: sceneConfigurations[Scene.Persons].iconType || 'default_icon_type',
+                }}
+                actions={
+                    <>
+                        <FeedbackButton id="customer-analytics-people-list-feedback-button" />
+                        <ScenePanel>
+                            <ScenePanelActionsSection>
+                                <ButtonPrimitive
+                                    menuItem
+                                    variant="danger"
+                                    onClick={() => {
+                                        LemonDialog.openForm({
+                                            width: '30rem',
+                                            title: 'Reset deleted person',
+                                            description: `Once a person is deleted, the "distinct_id" associated with them can no longer be used.
+                                                You can use this tool to reset the "distinct_id" for a person so that new events associated with it will create a new Person profile.`,
+                                            initialValues: {
+                                                distinct_id: '',
+                                            },
+                                            content: (
+                                                <LemonField name="distinct_id" label="Distinct ID to reset">
+                                                    <LemonInput type="text" autoFocus />
+                                                </LemonField>
+                                            ),
+                                            errors: {
+                                                distinct_id: (distinct_id) =>
+                                                    !distinct_id ? 'This is required' : undefined,
+                                            },
+                                            onSubmit: async ({ distinct_id }) =>
+                                                await resetDeletedDistinctId(distinct_id),
+                                        })
+                                    }}
+                                >
+                                    <IconRewind />
+                                    Reset a deleted person...
+                                </ButtonPrimitive>
+                            </ScenePanelActionsSection>
+                        </ScenePanel>
+                    </>
+                }
+            />
+            <PersonDisplayNameNudgeBanner uniqueKey={queryUniqueKey} />
+
+            <Query
+                uniqueKey={queryUniqueKey}
+                attachTo={personsSceneLogic({ tabId })}
+                query={{ ...query, showCount: true, showTableViews: true }}
+                setQuery={setQuery}
+                context={{
+                    refresh: 'blocking',
+                    emptyStateHeading: currentTeam?.ingested_event
+                        ? 'There are no matching persons for this query'
+                        : 'No persons exist because no events have been ingested',
+                    emptyStateDetail: currentTeam?.ingested_event ? (
+                        <>
+                            This page only shows{' '}
+                            <Link to="https://posthog.com/docs/data/persons">identified persons</Link>. Try adjusting
+                            your property filters, or make sure you're calling{' '}
+                            <Link to="https://posthog.com/docs/product-analytics/identify">identify</Link> in your app.
+                        </>
+                    ) : (
+                        <>
+                            Go to the{' '}
+                            <Link
+                                to={urls.onboarding({
+                                    productKey: ProductKey.PRODUCT_ANALYTICS,
+                                    stepKey: OnboardingStepKey.INSTALL,
+                                })}
+                                data-attr="real_project_with_no_events-ingestion_link"
+                            >
+                                onboarding flow
+                            </Link>{' '}
+                            to get things moving
+                        </>
+                    ),
+                    baseCurrency,
+                }}
+                dataAttr="persons-table"
+            />
+        </SceneContent>
+    )
+}

@@ -1,0 +1,213 @@
+# posthog-cli
+
+# 0.7.11
+
+- fix: resolve release once in `process` command to avoid race condition when multiple workers run in parallel
+- fix: skip synthetic Swift CU names (e.g. `<swift-imported-modules>`) before joining with `comp_dir` so they no longer dominate the project-root prefix and reject real source files
+
+# 0.7.10
+
+- feat: add `symbol-sets download` command to download symbol sets by ID or ref
+- feat: add `symbol-sets extract` command for local file extraction
+- fix: prevent ZIP path traversal in dSYM extraction
+- fix: validate symbol set ID is a UUID before download
+
+# 0.7.9
+
+- feat: warn and skip empty sourcemaps (no mappings/sources/names) during upload to surface bundler misconfigurations instead of silently uploading useless symbol sets
+
+# 0.7.8
+
+- feat: add `--build` flag to all upload commands (hermes, dsym, proguard, sourcemap) via shared ReleaseArgs
+- feat: build number packed into version string (`"1.0+42"`) for release uniqueness; UI splits on `+` to display version and build separately
+
+# 0.7.7
+
+- fix: align `dsym upload` release flags with other upload commands by using `--release-name` / `--release-version` (with backward-compatible aliases)
+- fix: reuse shared release args in `dsym upload` so release fallback behavior matches other upload commands
+
+# 0.7.5
+
+- fix: stable source bundle for dSYM uploads — CU-anchored prefix filter prevents framework sources from changing the content hash
+- fix: thin fat dSYM binaries per arch before zipping so sibling arch rebuilds don't cause content_hash_mismatch
+- fix: add `--force` flag to allow overwriting symbol sets whose content has changed
+
+# 0.7.4
+
+- fix: create per-UUID ZIP for dSYM uploads
+
+# 0.7.3
+
+- feat: enable symbol set compression
+- fix: fix process command reading from stdin
+
+# 0.7.2
+
+- feat: allow reading files and directories from stdin
+
+# 0.7.1
+
+- feat: track upload started and upload finished events
+
+# 0.7.0
+
+- feat: promote dsym, hermes, and proguard commands from experimental to top-level
+- feat: keep backward-compat aliases under `exp` (hidden from help)
+
+# 0.6.2
+
+- fix: endpoints now save to YAML with proper newlines
+
+# 0.6.1
+
+- chore: bump `cargo-dist` version
+
+# 0.6.0
+
+- Add experimental dSYM upload for iOS/macOS crash symbolication
+
+# 0.5.30
+
+- Add experimental dSYM upload for iOS/macOS crash symbolication
+
+# 0.5.29
+
+- chore: introduce env variable `POSTHOG_CLI_API_KEY` and `POSTHOG_CLI_PROJECT_ID` (backwards compatible)
+
+# 0.5.28
+
+- chore: introduce `--release-name` and `--release-version` options (backwards compatible)
+
+# 0.5.27
+
+- fix: only warns on release id mismatch errors
+
+# 0.5.26
+
+- feat: use env variables provided by github actions when available
+
+# 0.5.24
+
+- chore: add endpoints use case to cli auth flow
+
+# 0.5.23
+
+- feat: add experimental commands for endpoints management
+
+# 0.5.22
+
+- feat: add `--project` and `--version` to upload command to define release
+
+# 0.5.20
+
+- chore: add global `--rate-limit` option for Posthog client
+
+# 0.5.19
+
+- chore: upgrade cargo-dist to 0.30.3
+
+# 0.5.18
+
+- fix: fix git info parsing in vercel environment
+
+# 0.5.17
+
+- feat: add --file option to target built files directly
+
+# 0.5.16
+
+- fix: cut a new version for fixing compromised package
+
+# 0.5.15
+
+- Compromised
+
+# 0.5.14
+
+- Fix authentication issue on sourcemap upload
+
+# 0.5.13
+
+- Add `--include` option on sourcemap commands to match specific files inside directory
+
+# 0.5.12
+
+- Bug fixes and improvements
+
+# 0.5.11
+
+- Do not read bundle files as part of hermes sourcemap commands
+- Change hermes clone command to take two file paths (for the minified and composed maps respectively)
+
+# 0.5.10
+
+- Add terminal checks for login and query command
+
+# 0.5.9
+
+- Improve error handling from api
+- Reduce logs for sourcemap processing
+
+# 0.5.8
+
+- Adding experimental support for proguard mappings
+
+# 0.5.7
+
+- Fix bug where files point to the same sourcemap
+
+# 0.5.6
+
+- Adding experimental support for hermes sourcemaps
+
+# 0.5.5
+
+- When running inject command multiple times, we only update chunk ids when releases are different
+
+# 0.5.4
+
+- Added no fail flag to disable non-zero exit codes on errors.
+
+# 0.5.3
+
+- Add support for ignoring public path prefixes appended by bundlers to sourceMappingURLs when searching for sourcemaps
+  associated with minified source code. Does not modify the sourceMappingURL as published.
+
+# 0.5.2
+
+- Fixes a bug where chunks which shared a sourcemap were mishandled, leading to an error during upload in recent versions, and a silent
+  failure in older versions. If you're using next, and saw an error message about "duplicate chunk IDs", this fix addresses that issue.
+
+# 0.5.1
+
+- Attempts to reduce impact of previous breaking changes - re-adds `--project` and `--version` arguments to sourcemap upload command, marking them as no longer used
+
+# 0.5.0
+
+- Sourcemap injection, upload and process commands made retriable. Significant improvement to release creation.
+
+## 0.4.8
+
+- fix bug where directory ends with a javascript extension
+
+## 0.4.4
+
+- process uploads in batches
+
+## 0.4.3
+
+- add `ignore` argument to sourcemap inject, upload and process commands
+- add `skip_ssl_verification` argument for self-hosted instances
+
+## 0.4.2
+
+- fix url encoded sourcemaps
+
+## 0.4.1
+
+- add remote url to release metadata
+
+## 0.4.0
+
+- extract sourcemap url from source code
+- add process command to inject and upload sourcemaps

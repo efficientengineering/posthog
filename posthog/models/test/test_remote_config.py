@@ -1,0 +1,536 @@
+from decimal import Decimal
+from typing import Any
+
+import pytest
+from posthog.test.base import BaseTest
+from unittest.mock import patch
+
+from django.test import override_settings
+from django.utils import timezone
+
+from parameterized import parameterized
+
+from posthog.models.action.action import Action
+from posthog.models.feature_flag.feature_flag import FeatureFlag
+from posthog.models.project import Project
+from posthog.models.remote_config import RemoteConfig
+
+from products.surveys.backend.models import Survey
+
+CONFIG_REFRESH_QUERY_COUNT = 6
+
+
+@pytest.mark.usefixtures("unittest_snapshot")
+class _RemoteConfigBase(BaseTest):
+    snapshot: Any
+    remote_config: RemoteConfig
+
+    def setUp(self):
+        super().setUp()
+
+        project, team = Project.objects.create_with_team(
+            initiating_user=self.user,
+            organization=self.organization,
+            name="Test project",
+        )
+        self.team = team
+        self.team.api_token = "phc_12345"  # Easier to test against
+        self.team.recording_domains = ["https://*.example.com"]
+        self.team.session_recording_opt_in = True
+        self.team.surveys_opt_in = True
+        self.team.test_account_filters = [  # the default test account filters may use a cohort, which aren't supported by site functions (real-time filters)
+            {
+                "key": "email",
+                "value": "@posthog.com",
+                "operator": "not_icontains",
+                "type": "person",
+            }
+        ]
+        self.team.save()
+
+        # There will always be a config thanks to the signal
+        # But since we use transaction.on_commit(), we need to handle the async creation in tests
+        try:
+            self.remote_config = RemoteConfig.objects.get(team=self.team)
+        except RemoteConfig.DoesNotExist:
+            # Force synchronous creation for tests
+            from posthog.tasks.remote_config import update_team_remote_config
+
+            update_team_remote_config(self.team.id)
+            self.remote_config = RemoteConfig.objects.get(team=self.team)
+
+    def sync_remote_config(self):
+        """Force synchronous RemoteConfig update for tests"""
+        from posthog.tasks.remote_config import update_team_remote_config
+
+        update_team_remote_config(self.team.id)
+        self.remote_config.refresh_from_db()
+
+
+class TestRemoteConfig(_RemoteConfigBase):
+    def test_creates_remote_config_immediately(self):
+        assert self.remote_config
+        assert self.remote_config.updated_at
+        assert self.remote_config.synced_at
+        assert self.remote_config.config == self.snapshot
+
+    def test_indicates_if_feature_flags_exist(self):
+        assert not self.remote_config.config["hasFeatureFlags"]
+
+        flag = FeatureFlag.objects.create(
+            team=self.team,
+            filters={},
+            name="TestFlag",
+            key="test-flag",
+            created_by=self.user,
+            deleted=True,
+        )
+
+        assert not self.remote_config.config["hasFeatureFlags"]
+        flag.active = False
+        flag.deleted = False
+        flag.save()
+
+        # Force cache update to happen synchronously in tests
+        from posthog.tasks.remote_config import update_team_remote_config
+
+        update_team_remote_config(self.team.id)
+
+        self.remote_config.refresh_from_db()
+        assert not self.remote_config.config["hasFeatureFlags"]
+        flag.active = True
+        flag.deleted = False
+        flag.save()
+
+        # Force cache update to happen synchronously in tests
+        update_team_remote_config(self.team.id)
+
+        self.remote_config.refresh_from_db()
+        assert self.remote_config.config["hasFeatureFlags"]
+
+    def test_capture_dead_clicks_toggle(self):
+        self.team.capture_dead_clicks = True
+        self.team.save()
+        self.sync_remote_config()
+        assert self.remote_config.config["captureDeadClicks"]
+
+    def test_capture_performance_toggle(self):
+        self.team.capture_performance_opt_in = True
+        self.team.save()
+        self.sync_remote_config()
+        assert self.remote_config.config["capturePerformance"]["network_timing"]
+
+    def test_autocapture_opt_out_toggle(self):
+        self.team.autocapture_opt_out = True
+        self.team.save()
+        self.sync_remote_config()
+        assert self.remote_config.config["autocapture_opt_out"]
+
+    def test_autocapture_exceptions_toggle(self):
+        self.team.autocapture_exceptions_opt_in = True
+        self.team.save()
+        self.sync_remote_config()
+        assert self.remote_config.config["autocaptureExceptions"]
+
+    def test_conversations_disabled_by_default(self):
+        self.sync_remote_config()
+        assert (
+            self.remote_config.config.get("conversations") is None
+            or self.remote_config.config.get("conversations") is False
+        )
+
+    def test_conversations_enabled_with_defaults(self):
+        self.team.conversations_enabled = True
+        self.team.conversations_settings = {
+            "widget_enabled": True,
+            "widget_public_token": "test_public_token_123",
+        }
+        self.team.save()
+        self.sync_remote_config()
+        assert self.remote_config.config["conversations"]["enabled"] is True
+        assert self.remote_config.config["conversations"]["greetingText"] == "Hey, how can I help you today?"
+        assert self.remote_config.config["conversations"]["color"] == "#1d4aff"
+        assert self.remote_config.config["conversations"]["token"] == "test_public_token_123"
+        assert self.remote_config.config["conversations"]["domains"] == []
+        assert self.remote_config.config["conversations"]["widgetPosition"] == "bottom_right"
+        assert self.remote_config.config["conversations"]["requireEmail"] is False
+        assert self.remote_config.config["conversations"]["collectName"] is False
+        assert self.remote_config.config["conversations"]["identificationFormTitle"] == "Before we start..."
+        assert (
+            self.remote_config.config["conversations"]["identificationFormDescription"]
+            == "Please provide your details so we can help you better."
+        )
+        assert self.remote_config.config["conversations"]["placeholderText"] == "Type your message..."
+
+    def test_conversations_enabled_with_custom_config(self):
+        self.team.conversations_enabled = True
+        self.team.conversations_settings = {
+            "widget_enabled": True,
+            "widget_greeting_text": "Welcome! Need assistance?",
+            "widget_color": "#ff5733",
+            "widget_public_token": "custom_token",
+            "widget_domains": ["example.com", "test.com"],
+            "widget_position": "top_left",
+            "widget_require_email": True,
+            "widget_collect_name": True,
+            "widget_identification_form_title": "Let's get started",
+            "widget_identification_form_description": "Tell us about yourself",
+            "widget_placeholder_text": "Ask away...",
+        }
+        self.team.save()
+        self.sync_remote_config()
+        assert self.remote_config.config["conversations"]["enabled"] is True
+        assert self.remote_config.config["conversations"]["greetingText"] == "Welcome! Need assistance?"
+        assert self.remote_config.config["conversations"]["color"] == "#ff5733"
+        assert self.remote_config.config["conversations"]["token"] == "custom_token"
+        assert self.remote_config.config["conversations"]["domains"] == ["example.com", "test.com"]
+        assert self.remote_config.config["conversations"]["widgetPosition"] == "top_left"
+        assert self.remote_config.config["conversations"]["requireEmail"] is True
+        assert self.remote_config.config["conversations"]["collectName"] is True
+        assert self.remote_config.config["conversations"]["identificationFormTitle"] == "Let's get started"
+        assert self.remote_config.config["conversations"]["identificationFormDescription"] == "Tell us about yourself"
+        assert self.remote_config.config["conversations"]["placeholderText"] == "Ask away..."
+
+    def test_conversations_disabled_returns_false(self):
+        self.team.conversations_enabled = False
+        self.team.conversations_settings = {
+            "widget_enabled": True,
+            "widget_public_token": "should_not_appear",
+        }
+        self.team.save()
+        self.sync_remote_config()
+        assert self.remote_config.config["conversations"] is False
+
+    @parameterized.expand([["1.00", None], ["0.95", "0.95"], ["0.50", "0.5"], ["0.00", "0"], [None, None]])
+    def test_session_recording_sample_rate(self, value: str | None, expected: str | None) -> None:
+        self.team.session_recording_opt_in = True
+        self.team.session_recording_sample_rate = Decimal(value) if value else None
+        self.team.save()
+        self.sync_remote_config()
+        config = self.remote_config.config
+        assert config is not None
+        session_recording = config["sessionRecording"]
+        assert session_recording["sampleRate"] == expected
+
+    def test_session_recording_domains(self):
+        self.team.session_recording_opt_in = True
+        self.team.recording_domains = ["https://posthog.com", "https://*.posthog.com"]
+        self.team.save()
+        self.sync_remote_config()
+        config = self.remote_config.config
+        assert config is not None
+        session_recording = config["sessionRecording"]
+        assert session_recording["domains"] == self.team.recording_domains
+
+    def test_extra_settings_recorder_script(self):
+        self.team.session_recording_opt_in = True
+        self.team.extra_settings = {"recorder_script": "custom-recorder"}
+        self.team.save()
+        self.sync_remote_config()
+        assert self.remote_config.config["sessionRecording"]["scriptConfig"] == {"script": "custom-recorder"}
+
+    @parameterized.expand(
+        [
+            (True, {"script": "posthog-recorder"}),
+            (False, None),
+        ]
+    )
+    def test_script_config_uses_default_recorder_in_debug_mode(self, debug_value, expected_script_config):
+        with override_settings(DEBUG=debug_value):
+            self.team.session_recording_opt_in = True
+            self.team.extra_settings = None
+            self.team.save()
+            self.sync_remote_config()
+            assert self.remote_config.config["sessionRecording"]["scriptConfig"] == expected_script_config
+
+
+class TestRemoteConfigSurveys(_RemoteConfigBase):
+    # Largely copied from TestSurveysAPIList
+    def setUp(self):
+        super().setUp()
+
+        self.team.save()
+
+    def test_includes_survey_config(self):
+        survey_appearance = {
+            "thankYouMessageHeader": "Thanks for your feedback!",
+            "thankYouMessageDescription": "We'll use it to make notebooks better",
+        }
+
+        Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Basic survey",
+            description="This should not be included",
+            type="popover",
+            questions=[{"type": "open", "question": "What's a survey?"}],
+            start_date=timezone.now(),
+        )
+        self.team.survey_config = {"appearance": survey_appearance}
+        self.team.save()
+
+        self.sync_remote_config()
+        assert self.remote_config.config["survey_config"] == {
+            "appearance": {
+                "thankYouMessageHeader": "Thanks for your feedback!",
+                "thankYouMessageDescription": "We'll use it to make notebooks better",
+            }
+        }
+
+    def test_includes_range_of_survey_types(self):
+        survey_basic = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Basic survey",
+            description="This should not be included",
+            type="popover",
+            questions=[{"type": "open", "question": "What's a survey?"}],
+            start_date=timezone.now(),
+        )
+        linked_flag = FeatureFlag.objects.create(team=self.team, key="linked-flag", created_by=self.user)
+        targeting_flag = FeatureFlag.objects.create(team=self.team, key="targeting-flag", created_by=self.user)
+        internal_targeting_flag = FeatureFlag.objects.create(
+            team=self.team, key="custom-targeting-flag", created_by=self.user
+        )
+
+        survey_with_flags = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="Survey with flags",
+            type="popover",
+            linked_flag=linked_flag,
+            targeting_flag=targeting_flag,
+            internal_targeting_flag=internal_targeting_flag,
+            questions=[{"type": "open", "question": "What's a hedgehog?"}],
+            start_date=timezone.now(),
+        )
+
+        action = Action.objects.create(
+            team=self.team,
+            name="user subscribed",
+            steps_json=[{"event": "$pageview", "url": "docs", "url_matching": "contains"}],
+        )
+
+        survey_with_actions = Survey.objects.create(
+            team=self.team,
+            created_by=self.user,
+            name="survey with actions",
+            type="popover",
+            questions=[{"type": "open", "question": "Why's a hedgehog?"}],
+            start_date=timezone.now(),
+        )
+        survey_with_actions.actions.set(Action.objects.filter(name="user subscribed"))
+        survey_with_actions.save()
+
+        self.sync_remote_config()
+        assert self.remote_config.config["surveys"]
+
+        actual_surveys = sorted(self.remote_config.config["surveys"], key=lambda s: str(s["id"]))
+        basic_questions = survey_basic.questions
+        assert basic_questions is not None
+        flags_questions = survey_with_flags.questions
+        assert flags_questions is not None
+        actions_questions = survey_with_actions.questions
+        assert actions_questions is not None
+        expected_surveys = sorted(
+            [
+                {
+                    "id": str(survey_basic.id),
+                    "name": "Basic survey",
+                    "type": "popover",
+                    "end_date": None,
+                    "questions": [
+                        {"id": str(basic_questions[0]["id"]), "type": "open", "question": "What's a survey?"}
+                    ],
+                    "appearance": None,
+                    "conditions": None,
+                    "start_date": (
+                        survey_basic.start_date.isoformat().replace("+00:00", "Z") if survey_basic.start_date else None
+                    ),
+                    "current_iteration": None,
+                    "current_iteration_start_date": None,
+                    "schedule": "once",
+                    "enable_partial_responses": False,
+                },
+                {
+                    "id": str(survey_with_flags.id),
+                    "name": "Survey with flags",
+                    "type": "popover",
+                    "end_date": None,
+                    "questions": [
+                        {
+                            "id": str(flags_questions[0]["id"]),
+                            "type": "open",
+                            "question": "What's a hedgehog?",
+                        }
+                    ],
+                    "appearance": None,
+                    "conditions": None,
+                    "start_date": (
+                        survey_with_flags.start_date.isoformat().replace("+00:00", "Z")
+                        if survey_with_flags.start_date
+                        else None
+                    ),
+                    "linked_flag_key": "linked-flag",
+                    "current_iteration": None,
+                    "targeting_flag_key": "targeting-flag",
+                    "internal_targeting_flag_key": "custom-targeting-flag",
+                    "current_iteration_start_date": None,
+                    "schedule": "once",
+                    "enable_partial_responses": False,
+                },
+                {
+                    "id": str(survey_with_actions.id),
+                    "name": "survey with actions",
+                    "type": "popover",
+                    "end_date": None,
+                    "questions": [
+                        {
+                            "id": str(actions_questions[0]["id"]),
+                            "type": "open",
+                            "question": "Why's a hedgehog?",
+                        }
+                    ],
+                    "appearance": None,
+                    "conditions": {
+                        "actions": {
+                            "values": [
+                                {
+                                    "id": action.id,
+                                    "name": "user subscribed",
+                                    "steps": [
+                                        {
+                                            "url": "docs",
+                                            "href": None,
+                                            "text": None,
+                                            "event": "$pageview",
+                                            "selector": None,
+                                            "selector_regex": None,
+                                            "tag_name": None,
+                                            "properties": None,
+                                            "url_matching": "contains",
+                                            "href_matching": None,
+                                            "text_matching": None,
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    },
+                    "start_date": (
+                        survey_with_actions.start_date.isoformat().replace("+00:00", "Z")
+                        if survey_with_actions.start_date
+                        else None
+                    ),
+                    "current_iteration": None,
+                    "current_iteration_start_date": None,
+                    "schedule": "once",
+                    "enable_partial_responses": False,
+                },
+            ],
+            key=lambda s: str(s["id"]),  # type: ignore
+        )
+
+        assert actual_surveys == expected_surveys
+
+
+@override_settings(POSTHOG_JS_S3_BUCKET="")
+@override_settings(POSTHOG_JS_S3_BUCKET="")
+class TestRemoteConfigCaching(_RemoteConfigBase):
+    def setUp(self):
+        super().setUp()
+        self.remote_config.refresh_from_db()
+        # Clear the HyperCache so we are properly testing each flow
+        RemoteConfig.get_hypercache().clear_cache(self.team.api_token)
+
+    def _assert_matches_config(self, data):
+        assert data == self.snapshot
+
+    def _assert_matches_config_js(self, data):
+        assert data == self.snapshot
+
+    def _assert_matches_config_array_js(self, data):
+        assert data == self.snapshot
+
+    def test_syncs_if_changes(self):
+        synced_at = self.remote_config.synced_at
+        self.remote_config.config["surveys"] = True
+        self.remote_config.sync()
+        assert synced_at < self.remote_config.synced_at  # type: ignore
+
+    def test_does_not_syncs_if_no_changes(self):
+        synced_at = self.remote_config.synced_at
+        self.remote_config.sync()
+        assert synced_at == self.remote_config.synced_at
+
+    def test_persists_data_to_redis_on_sync(self):
+        self.remote_config.config["surveys"] = True
+        self.remote_config.sync()
+        assert RemoteConfig.get_hypercache().get_from_cache(self.team.api_token) is not None
+
+    @patch("posthog.models.remote_config.requests.post")
+    def test_purges_cdn_cache_on_sync(self, mock_post):
+        with self.settings(
+            REMOTE_CONFIG_CDN_PURGE_ENDPOINT="https://api.cloudflare.com/client/v4/zones/MY_ZONE_ID/purge_cache",
+            REMOTE_CONFIG_CDN_PURGE_TOKEN="MY_TOKEN",
+            REMOTE_CONFIG_CDN_PURGE_DOMAINS=["cdn.posthog.com", "https://cdn2.posthog.com"],
+        ):
+            # Force a change to the config
+            self.remote_config.config["token"] = "NOT"
+            self.remote_config.sync()
+            mock_post.assert_called_once_with(
+                "https://api.cloudflare.com/client/v4/zones/MY_ZONE_ID/purge_cache",
+                headers={"Authorization": "Bearer MY_TOKEN"},
+                json={
+                    "files": [
+                        {"url": "https://cdn.posthog.com/array/phc_12345/config"},
+                        {"url": "https://cdn.posthog.com/array/phc_12345/config.js"},
+                        {"url": "https://cdn2.posthog.com/array/phc_12345/config"},
+                        {"url": "https://cdn2.posthog.com/array/phc_12345/config.js"},
+                    ]
+                },
+            )
+
+
+class TestRemoteConfigRaceCondition(_RemoteConfigBase):
+    """Test for the race condition where post_save signal fires before transaction commits."""
+
+    def test_remote_config_cache_reflects_committed_database_state(self):
+        """
+        Test that remote config cache reflects committed database state after feature flag creation.
+
+        This test verifies the fix for the race condition where cache updates happen
+        after database transactions commit, ensuring consistent state.
+        """
+        # Start with no feature flags
+        assert not self.remote_config.config["hasFeatureFlags"]
+
+        # Create a feature flag - this should trigger cache update after transaction commits
+        FeatureFlag.objects.create(
+            team=self.team,
+            filters={},
+            name="TestFlag",
+            key="test-flag",
+            created_by=self.user,
+            active=True,
+            deleted=False,
+        )
+
+        # After creation completes, database should have the flag
+        final_flag_count = FeatureFlag.objects.filter(team=self.team, active=True, deleted=False).count()
+        assert final_flag_count == 1, "Database should contain 1 active flag after creation"
+
+        # Force cache update to happen synchronously in tests (since Celery tasks might not run)
+        from posthog.tasks.remote_config import update_team_remote_config
+
+        update_team_remote_config(self.team.id)
+
+        # Cache should reflect the correct database state (this should now pass with the fix)
+        self.remote_config.refresh_from_db()
+        cached_has_flags = self.remote_config.config["hasFeatureFlags"]
+
+        # This should pass now that we use transaction.on_commit() for cache updates
+        assert cached_has_flags, (
+            f"Cache should show hasFeatureFlags=True when database has {final_flag_count} active flags. "
+            f"If this fails, the race condition fix is not working properly."
+        )

@@ -1,0 +1,311 @@
+import re
+import math
+from datetime import date, datetime
+from typing import Any, Literal, Optional
+from uuid import UUID
+from zoneinfo import ZoneInfo
+
+from posthog.hogql.errors import QueryError, ResolutionError
+
+from posthog.models.utils import UUIDT
+
+# Copied from clickhouse_driver.util.escape, adapted only from single quotes to backquotes.
+escape_chars_map = {
+    "\b": "\\b",
+    "\f": "\\f",
+    "\r": "\\r",
+    "\n": "\\n",
+    "\t": "\\t",
+    "\0": "\\0",
+    "\a": "\\a",
+    "\v": "\\v",
+    "\\": "\\\\",
+}
+singlequote_escape_chars_map = {**escape_chars_map, "'": "\\'"}
+backquote_escape_chars_map = {**escape_chars_map, "`": "\\`"}
+
+
+def safe_identifier(identifier: str) -> str:
+    if "%" in identifier:
+        identifier = identifier.replace("%", "")
+
+    return identifier
+
+
+# Copied from clickhouse_driver.util.escape_param
+def escape_param_clickhouse(value: str) -> str:
+    return "'{}'".format("".join(singlequote_escape_chars_map.get(c, c) for c in str(value)))
+
+
+# Copied from clickhouse_driver.util.escape, adapted from single quotes to backquotes. Added a $.
+def escape_hogql_identifier(identifier: str | int) -> str:
+    if isinstance(identifier, int):  # In HogQL we allow integers as identifiers to access array elements
+        return str(identifier)
+    if "%" in identifier:
+        raise QueryError(f'The HogQL identifier "{identifier}" is not permitted as it contains the "%" character')
+    # HogQL allows dollars in the identifier.
+    if re.match(
+        r"^[A-Za-z_$][A-Za-z0-9_$]*$", identifier
+    ):  # Same regex as the frontend escapePropertyAsHogQlIdentifier
+        return identifier
+    return "`{}`".format("".join(backquote_escape_chars_map.get(c, c) for c in identifier))
+
+
+# Copied from dlt/common/data_writers/escape.py
+POSTGRES_SIMPLE_IDENTIFIER_REGEX = re.compile(r"^[a-z_][a-z0-9_$]*$")
+
+# https://www.postgresql.org/docs/current/sql-keywords-appendix.html
+POSTGRES_RESERVED_KEYWORDS = {
+    "ALL",
+    "ANALYSE",
+    "ANALYZE",
+    "AND",
+    "ANY",
+    "ARRAY",
+    "AS",
+    "ASC",
+    "ASYMMETRIC",
+    "AUTHORIZATION",
+    "BINARY",
+    "BOTH",
+    "CASE",
+    "CAST",
+    "CHECK",
+    "COLLATE",
+    "COLLATION",
+    "COLUMN",
+    "CONCURRENTLY",
+    "CONSTRAINT",
+    "CREATE",
+    "CROSS",
+    "CURRENT_CATALOG",
+    "CURRENT_DATE",
+    "CURRENT_ROLE",
+    "CURRENT_SCHEMA",
+    "CURRENT_TIME",
+    "CURRENT_TIMESTAMP",
+    "CURRENT_USER",
+    "DEFAULT",
+    "DEFERRABLE",
+    "DESC",
+    "DISTINCT",
+    "DO",
+    "ELSE",
+    "END",
+    "EXCEPT",
+    "FALSE",
+    "FETCH",
+    "FOR",
+    "FOREIGN",
+    "FREEZE",
+    "FROM",
+    "FULL",
+    "GRANT",
+    "GROUP",
+    "HAVING",
+    "ILIKE",
+    "IN",
+    "INITIALLY",
+    "INNER",
+    "INTERSECT",
+    "INTO",
+    "IS",
+    "ISNULL",
+    "JOIN",
+    "LATERAL",
+    "LEADING",
+    "LEFT",
+    "LIKE",
+    "LIMIT",
+    "LOCALTIME",
+    "LOCALTIMESTAMP",
+    "NATURAL",
+    "NOT",
+    "NOTNULL",
+    "NULL",
+    "OFFSET",
+    "ON",
+    "ONLY",
+    "OR",
+    "ORDER",
+    "OUTER",
+    "OVER",
+    "OVERLAPS",
+    "PLACING",
+    "PRIMARY",
+    "REFERENCES",
+    "RETURNING",
+    "RIGHT",
+    "SELECT",
+    "SESSION_USER",
+    "SIMILAR",
+    "SOME",
+    "SYMMETRIC",
+    "TABLE",
+    "TABLESAMPLE",
+    "THEN",
+    "TO",
+    "TRAILING",
+    "TRUE",
+    "UNION",
+    "UNIQUE",
+    "USER",
+    "USING",
+    "VARIADIC",
+    "VERBOSE",
+    "WHEN",
+    "WHERE",
+    "WINDOW",
+    "WITH",
+}
+
+
+# DuckDB reserves a handful of additional keywords that Postgres doesn't, so identifiers
+# colliding with these must be quoted when emitting DuckDB SQL even though they'd be
+# unambiguous in Postgres. Derived from DuckDB's ``duckdb_keywords()`` catalog with
+# ``keyword_category = 'reserved'`` — re-verify and update before major DuckDB version bumps.
+DUCKDB_EXTRA_RESERVED_KEYWORDS = {
+    "ANTI",
+    "ASOF",
+    "ATTACH",
+    "DETACH",
+    "EXCLUDE",
+    "INSTALL",
+    "LOAD",
+    "MACRO",
+    "PIVOT",
+    "POSITIONAL",
+    "PRAGMA",
+    "QUALIFY",
+    "REPLACE",
+    "SAMPLE",
+    "SEMI",
+    "SUMMARIZE",
+    "UNPIVOT",
+}
+
+
+def escape_postgres_identifier(v: str) -> str:
+    if len(v) > 63:
+        raise QueryError(f'The Postgres identifier "{v}" is too long. Maximum length is 63 characters.')
+
+    return _quote_postgres_wire_identifier(v, extra_reserved_keywords=None)
+
+
+def escape_duckdb_identifier(v: str) -> str:
+    """Escape an identifier for DuckDB. Same quoting rules as Postgres but no length limit,
+    and with DuckDB's additional reserved keywords treated as requiring quotes."""
+    return _quote_postgres_wire_identifier(v, extra_reserved_keywords=DUCKDB_EXTRA_RESERVED_KEYWORDS)
+
+
+def _quote_postgres_wire_identifier(v: str, extra_reserved_keywords: set[str] | None) -> str:
+    # Reject ``%`` for parity with the HogQL and ClickHouse escape paths. psycopg
+    # interprets ``%`` as the start of a parameter placeholder when scanning SQL
+    # passed to ``cursor.execute(sql, params)``, so a literal ``%`` slipping through
+    # as an identifier name would either confuse parameter binding or get consumed
+    # as a format specifier.
+    if "%" in v:
+        raise QueryError(f'The Postgres identifier "{v}" is not permitted as it contains the "%" character')
+
+    if POSTGRES_SIMPLE_IDENTIFIER_REGEX.match(v):
+        upper = v.upper()
+        if upper not in POSTGRES_RESERVED_KEYWORDS and (
+            extra_reserved_keywords is None or upper not in extra_reserved_keywords
+        ):
+            return v
+
+    return '"' + v.replace('"', '""') + '"'
+
+
+# Copied from clickhouse_driver.util.escape, adapted from single quotes to backquotes.
+def escape_clickhouse_identifier(identifier: str) -> str:
+    if "%" in identifier:
+        raise QueryError(f'The HogQL identifier "{identifier}" is not permitted as it contains the "%" character')
+    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", identifier):
+        return identifier
+    return "`{}`".format("".join(backquote_escape_chars_map.get(c, c) for c in identifier))
+
+
+def escape_hogql_string(
+    name: bool | float | int | str | list | tuple | date | datetime | UUID | UUIDT | None,
+    timezone: Optional[str] = None,
+) -> str:
+    return SQLValueEscaper(timezone=timezone, dialect="hogql").visit(name)
+
+
+def escape_clickhouse_string(
+    name: Optional[float | int | str | list | tuple | date | datetime | UUID | UUIDT],
+    timezone: Optional[str] = None,
+) -> str:
+    return SQLValueEscaper(timezone=timezone, dialect="clickhouse").visit(name)
+
+
+class SQLValueEscaper:
+    def __init__(
+        self,
+        timezone: Optional[str] = None,
+        dialect: Literal["hogql", "clickhouse"] = "clickhouse",
+    ):
+        self._timezone = timezone or "UTC"
+        self._dialect = dialect
+
+    # Unlike posthog.hogql.visitor.Visitor, this tiny visitor works on primitives.
+    def visit(self, node: Any) -> str:
+        method_name = f"visit_{node.__class__.__name__.lower()}"
+        if hasattr(self, method_name):
+            return getattr(self, method_name)(node)
+        raise ResolutionError(f"SQLValueEscaper has no method {method_name}")
+
+    def visit_nonetype(self, value: None):
+        return "NULL"
+
+    def visit_str(self, value: str):
+        return escape_param_clickhouse(value)
+
+    def visit_bool(self, value: bool):
+        if self._dialect == "clickhouse":
+            return "1" if value is True else "0"
+        return "true" if value is True else "false"
+
+    def visit_int(self, value: int):
+        return str(value)
+
+    def visit_float(self, value: float):
+        if math.isnan(value):
+            return "NaN"
+        if math.isinf(value):
+            if value == float("-inf"):
+                return "-Inf"
+            return "Inf"
+        return str(value)
+
+    def visit_uuid(self, value: UUID):
+        if self._dialect == "hogql":
+            return f"toUUID({self.visit(str(value))})"
+        return f"toUUIDOrNull({self.visit(str(value))})"
+
+    def visit_uuidt(self, value: UUIDT):
+        if self._dialect == "hogql":
+            return f"toUUID({self.visit(str(value))})"
+        return f"toUUIDOrNull({self.visit(str(value))})"
+
+    def visit_fakedatetime(self, value: datetime):
+        return self.visit_datetime(value)
+
+    def visit_datetime(self, value: datetime):
+        datetime_string = value.astimezone(ZoneInfo(self._timezone)).strftime("%Y-%m-%d %H:%M:%S.%f")
+        if self._dialect == "hogql":
+            return f"toDateTime({self.visit(datetime_string)})"  # no timezone for hogql
+        return f"toDateTime64({self.visit(datetime_string)}, 6, {self.visit(self._timezone)})"
+
+    def visit_fakedate(self, value: date):
+        return self.visit_date(value)
+
+    def visit_date(self, value: date):
+        return f"toDate({self.visit(value.strftime('%Y-%m-%d'))})"
+
+    def visit_list(self, value: list):
+        return f"[{', '.join(str(self.visit(x)) for x in value)}]"
+
+    def visit_tuple(self, value: tuple):
+        return f"({', '.join(str(self.visit(x)) for x in value)})"

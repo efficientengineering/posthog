@@ -1,0 +1,1609 @@
+import uuid
+import asyncio
+import builtins
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any, List, Optional, TypeVar, Union, cast  # noqa: UP035
+
+from django.conf import settings
+from django.db.models import Prefetch
+from django.shortcuts import get_object_or_404
+
+import structlog
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import (
+    OpenApiExample,
+    OpenApiParameter,
+    extend_schema,
+    extend_schema_field,
+    extend_schema_serializer,
+    extend_schema_view,
+)
+from loginas.utils import is_impersonated_session
+from opentelemetry import trace
+from prometheus_client import Counter
+from requests import HTTPError
+from rest_framework import request, response, serializers, viewsets
+from rest_framework.exceptions import MethodNotAllowed, NotFound, ValidationError
+from rest_framework.pagination import LimitOffsetPagination
+from rest_framework.parsers import JSONParser
+from rest_framework.renderers import BaseRenderer
+from rest_framework.response import Response
+from rest_framework.settings import api_settings
+from rest_framework_csv import renderers as csvrenderers
+from temporalio import common
+
+from posthog.schema import ProductKey
+
+from posthog.hogql.constants import CSV_EXPORT_LIMIT
+
+from posthog.api.capture import capture_internal
+from posthog.api.documentation import PersonPropertiesSerializer
+from posthog.api.insight import capture_legacy_api_call
+from posthog.api.property_value_metrics import PROPERTY_VALUES_DURATION
+from posthog.api.routing import TeamAndOrgViewSetMixin
+from posthog.api.utils import action, format_paginated_url, get_pk_or_uuid, get_target_entity
+from posthog.auth import PersonalAPIKeyAuthentication
+from posthog.clickhouse.query_tagging import Feature, tag_queries
+from posthog.constants import INSIGHT_FUNNELS, LIMIT, OFFSET, FunnelVizType
+from posthog.decorators import cached_by_filters
+from posthog.event_usage import get_request_analytics_properties
+from posthog.metrics import LABEL_TEAM_ID
+from posthog.models import Cohort, Filter, Person, Team, User
+from posthog.models.activity_logging.activity_log import Change, Detail, load_activity, log_activity
+from posthog.models.activity_logging.activity_page import activity_page_response
+from posthog.models.async_deletion import AsyncDeletion, DeletionType
+from posthog.models.cohort.util import get_all_cohort_ids_by_person_uuid
+from posthog.models.filters.lifecycle_filter import LifecycleFilter
+from posthog.models.filters.path_filter import PathFilter
+from posthog.models.filters.properties_timeline_filter import PropertiesTimelineFilter
+from posthog.models.filters.retention_filter import RetentionFilter
+from posthog.models.person.deletion import reset_deleted_person_distinct_ids
+from posthog.models.person.missing_person import MissingPerson
+from posthog.models.person.person import PersonDistinctId
+from posthog.models.person.util import (
+    delete_person,
+    delete_persons_from_postgres,
+    get_person_by_pk_or_uuid,
+    get_persons_by_distinct_ids,
+    get_persons_by_uuids,
+)
+from posthog.queries.actor_base_query import ActorBaseQuery, get_serialized_people
+from posthog.queries.funnels import ClickhouseFunnelActors, ClickhouseFunnelTrendsActors
+from posthog.queries.funnels.funnel_strict_persons import ClickhouseFunnelStrictActors
+from posthog.queries.funnels.funnel_unordered_persons import ClickhouseFunnelUnorderedActors
+from posthog.queries.insight import insight_sync_execute
+from posthog.queries.person_query import PersonQuery
+from posthog.queries.properties_timeline import PropertiesTimeline
+from posthog.queries.trends.lifecycle import Lifecycle
+from posthog.queries.trends.trends_actors import TrendsActors
+from posthog.rate_limit import ClickHouseBurstRateThrottle, PersonalApiKeyRateThrottle, UserOrEmailRateThrottle
+from posthog.renderers import SafeJSONRenderer
+from posthog.settings import EE_AVAILABLE
+from posthog.tasks.split_person import split_person
+from posthog.temporal.common.client import sync_connect
+from posthog.temporal.session_replay.delete_recordings.types import DeletionConfig, RecordingsWithPersonInput
+from posthog.utils import format_query_params_absolute_url, is_anonymous_id, refresh_requested_by_client
+
+logger = structlog.get_logger(__name__)
+tracer = trace.get_tracer(__name__)
+
+DEFAULT_PAGE_LIMIT = 100
+# Sync with .../lib/constants.tsx and .../cdp/utils.ts
+# It's almost certainly wrong to add more properties to this list, instead convince the user to send data to use with
+# these properties, or use e.g. a CDP transformation to rewrite their events.
+#
+# If you do want to add new columns
+# * add it to the places linked above
+# * ensure it is materialized on US and EU prod
+# * ensure the materialized columns have case-insensitive skip indexes
+# * ensure that the text box search in the Persons scene is searching this column (using the Actors query)
+
+PERSON_DEFAULT_DISPLAY_NAME_PROPERTIES = [
+    "email",
+    "name",
+    "username",
+]
+
+API_PERSON_LIST_BYTES_READ_FROM_POSTGRES_COUNTER = Counter(
+    "api_person_list_bytes_read_from_postgres",
+    "An estimate of how many bytes we've read from postgres to return the person endpoint.",
+    labelnames=[LABEL_TEAM_ID],
+)
+
+
+class PersonLimitOffsetPagination(LimitOffsetPagination):
+    def get_paginated_response_schema(self, schema):
+        return {
+            "type": "object",
+            "properties": {
+                "next": {
+                    "type": "string",
+                    "nullable": True,
+                    "format": "uri",
+                    "example": "https://app.posthog.com/api/projects/{project_id}/accounts/?offset=400&limit=100",
+                },
+                "previous": {
+                    "type": "string",
+                    "nullable": True,
+                    "format": "uri",
+                    "example": "https://app.posthog.com/api/projects/{project_id}/accounts/?offset=400&limit=100",
+                },
+                "count": {"type": "integer", "example": 400},
+                "results": schema,
+            },
+        }
+
+
+def get_person_name(team: Team, person: Person) -> str:
+    return get_person_name_helper(person.pk, person.properties, person.distinct_ids, team)
+
+
+def get_person_name_helper(
+    person_pk: int, person_properties: dict[str, str], distinct_ids: list[str], team: Team
+) -> str:
+    display_name = None
+    for property in team.person_display_name_properties or PERSON_DEFAULT_DISPLAY_NAME_PROPERTIES:
+        if person_properties and person_properties.get(property):
+            display_name = person_properties.get(property)
+            break
+    if display_name:
+        return display_name
+    if len(distinct_ids) > 0:
+        # Prefer non-UUID distinct IDs (presumably from user identification) over UUIDs
+        return sorted(distinct_ids, key=is_anonymous_id)[0]
+    return str(person_pk)
+
+
+class PersonsWebBurstThrottle(UserOrEmailRateThrottle):
+    scope = "persons_burst"
+    rate = "180/minute"
+
+
+class PersonsWebSustainedThrottle(UserOrEmailRateThrottle):
+    scope = "persons_sustained"
+    rate = "1200/hour"
+
+
+class PersonsDeleteBurstThrottle(PersonalApiKeyRateThrottle):
+    scope = "persons_delete_burst"
+    rate = "480/minute"
+
+
+class PersonsDeleteSustainedThrottle(PersonalApiKeyRateThrottle):
+    scope = "persons_delete_sustained"
+    rate = "4800/hour"
+
+
+class PersonUpdatePropertyRequestSerializer(serializers.Serializer):
+    key = serializers.CharField(help_text="The property key to set.")
+    value = serializers.JSONField(help_text="The property value. Can be a string, number, boolean, or object.")
+
+
+class PersonDeletePropertyRequestSerializer(serializers.Serializer):
+    def get_fields(self):
+        fields = super().get_fields()
+        # The endpoint reads request.data["$unset"], so the field name must include the $ prefix.
+        fields["$unset"] = serializers.CharField(help_text="The property key to remove from this person.")
+        return fields
+
+
+class PersonBulkDeleteRequestSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="A list of PostHog person UUIDs to delete (max 1000).",
+    )
+    distinct_ids = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="A list of distinct IDs whose associated persons will be deleted (max 1000).",
+    )
+    delete_events = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="If true, queue deletion of all events associated with these persons.",
+    )
+    delete_recordings = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="If true, queue deletion of all recordings associated with these persons.",
+    )
+    keep_person = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="If true, keep the person records but delete their events and recordings.",
+    )
+
+
+class PersonBulkDeleteResponseSerializer(serializers.Serializer):
+    persons_found = serializers.IntegerField(help_text="Number of persons matched by the provided IDs or distinct IDs.")
+    persons_deleted = serializers.IntegerField(
+        help_text="Number of person records deleted from the database. 0 if keep_person was true."
+    )
+    events_queued_for_deletion = serializers.BooleanField(
+        help_text="Whether event deletion was requested for the matched persons. "
+        "If a deletion was already queued for a person, it will not be duplicated."
+    )
+    recordings_queued_for_deletion = serializers.BooleanField(
+        help_text="Whether recording deletion was requested for the matched persons. "
+        "If a deletion was already queued for a person, it will not be duplicated."
+    )
+    deletion_errors = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        help_text="Persons that could not be deleted. Each entry contains 'person_uuid'. Contact support if this persists.",
+    )
+
+
+class AsyncDeletionStatusSerializer(serializers.Serializer):
+    person_uuid = serializers.CharField(
+        source="key", help_text="The UUID of the person whose events are queued for deletion."
+    )
+    created_at = serializers.DateTimeField(help_text="When the deletion was requested.")
+    status = serializers.SerializerMethodField(help_text="Current status: 'pending' or 'completed'.")
+    delete_verified_at = serializers.DateTimeField(
+        help_text="When the deletion was verified complete. Null if still pending.", allow_null=True
+    )
+
+    def get_status(self, obj: AsyncDeletion) -> str:
+        return "completed" if obj.delete_verified_at else "pending"
+
+
+class DeletionStatusQueryParamsSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=["pending", "completed", "all"],
+        default="all",
+        required=False,
+    )
+    person_uuid = serializers.UUIDField(required=False)
+
+
+class DeletionStatusPagination(LimitOffsetPagination):
+    default_limit = 100
+
+
+@extend_schema_serializer(component_name="PersonRecord")
+class PersonSerializer(serializers.HyperlinkedModelSerializer):
+    name = serializers.SerializerMethodField(
+        help_text="Display name derived from person properties (email, name, or username)."
+    )
+
+    class Meta:
+        model = Person
+        fields = [
+            "id",
+            "name",
+            "distinct_ids",
+            "properties",
+            "created_at",
+            "uuid",
+            "last_seen_at",
+        ]
+        read_only_fields = ("id", "name", "distinct_ids", "created_at", "uuid", "last_seen_at")
+        extra_kwargs = {
+            "id": {"help_text": "Numeric person ID."},
+            "uuid": {"help_text": "Unique identifier (UUID) for this person."},
+            "properties": {"help_text": "Key-value map of person properties set via $set and $set_once operations."},
+            "created_at": {"help_text": "When this person was first seen (ISO 8601)."},
+            "last_seen_at": {"help_text": "Timestamp of the last event from this person, or null."},
+        }
+
+    def get_name(self, person: Person) -> str:
+        team = self.context["get_team"]()
+        return get_person_name(team, person)
+
+    def to_representation(self, instance: Union[Person, MissingPerson]) -> dict[str, Any]:
+        if isinstance(instance, Person):
+            representation = super().to_representation(instance)
+            representation["distinct_ids"] = sorted(representation["distinct_ids"], key=is_anonymous_id)
+            return representation
+        elif isinstance(instance, MissingPerson):
+            return {
+                "id": None,
+                "name": None,
+                "distinct_ids": [instance.distinct_id],
+                "properties": instance.properties,
+                "created_at": None,
+                "uuid": instance.uuid,
+                "last_seen_at": None,
+            }
+
+
+# person distinct ids can grow to be a very large list
+# in the UI we don't need all of them, so we can limit the number of distinct ids we return
+@extend_schema_serializer(component_name="MinimalPerson")
+class MinimalPersonSerializer(PersonSerializer):
+    distinct_ids = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_distinct_ids(self, person):
+        return person.distinct_ids[:10]
+
+
+class PersonPropertiesAtTimeMetadataSerializer(serializers.Serializer):
+    """Serializer for the point-in-time query metadata."""
+
+    queried_timestamp = serializers.CharField(help_text="The timestamp that was queried in ISO format")
+    include_set_once = serializers.BooleanField(help_text="Whether $set_once operations were included")
+    distinct_id_used = serializers.CharField(allow_null=True, help_text="The distinct_id parameter used in the request")
+    person_id_used = serializers.CharField(allow_null=True, help_text="The person_id parameter used in the request")
+    query_mode = serializers.CharField(help_text="Whether the query used 'distinct_id' or 'person_id' mode")
+    distinct_ids_queried = serializers.ListField(
+        child=serializers.CharField(), help_text="All distinct_ids that were queried for this person"
+    )
+    distinct_ids_count = serializers.IntegerField(help_text="Number of distinct_ids associated with this person")
+
+
+class PersonPropertiesAtTimeDebugSerializer(serializers.Serializer):
+    """Serializer for the debug information (only available to staff users)."""
+
+    query = serializers.CharField(help_text="The ClickHouse query that was executed")
+    params = serializers.DictField(help_text="The parameters passed to the query")
+    events_found = serializers.IntegerField(help_text="Number of events found")
+    events = serializers.ListField(
+        child=serializers.DictField(), help_text="Raw events that were used to build the properties"
+    )
+    error = serializers.CharField(required=False, help_text="Error message if debug query failed")
+
+
+class PersonPropertiesAtTimeResponseSerializer(serializers.Serializer):
+    """Serializer for the point-in-time person properties response."""
+
+    # Base PersonSerializer fields
+    id = serializers.IntegerField(help_text="The person ID")
+    name = serializers.CharField(help_text="The person's display name")
+    distinct_ids = serializers.ListField(
+        child=serializers.CharField(), help_text="All distinct IDs associated with this person"
+    )
+    properties = serializers.DictField(
+        child=serializers.CharField(allow_blank=True, allow_null=True),
+        help_text="Person properties as they existed at the specified time",
+    )
+    created_at = serializers.DateTimeField(help_text="When the person was first created")
+    uuid = serializers.UUIDField(help_text="The person's UUID")
+    last_seen_at = serializers.DateTimeField(help_text="When the person was last seen", allow_null=True)
+
+    # Additional fields for point-in-time response
+    point_in_time_metadata = PersonPropertiesAtTimeMetadataSerializer(
+        help_text="Metadata about the point-in-time query"
+    )
+    debug = PersonPropertiesAtTimeDebugSerializer(
+        required=False, help_text="Debug information (only available when debug=true and DEBUG=True)"
+    )
+
+
+def get_funnel_actor_class(filter: Filter) -> Callable:
+    funnel_actor_class: type[ActorBaseQuery]
+
+    if filter.correlation_person_entity and EE_AVAILABLE:
+        if EE_AVAILABLE:
+            from ee.clickhouse.queries.funnels.funnel_correlation_persons import FunnelCorrelationActors
+
+            funnel_actor_class = FunnelCorrelationActors
+        else:
+            raise ValueError(
+                "Funnel Correlations is not available without an enterprise license and enterprise supported deployment"
+            )
+    elif filter.funnel_viz_type == FunnelVizType.TRENDS:
+        funnel_actor_class = ClickhouseFunnelTrendsActors
+    else:
+        if filter.funnel_order_type == "unordered":
+            funnel_actor_class = ClickhouseFunnelUnorderedActors
+        elif filter.funnel_order_type == "strict":
+            funnel_actor_class = ClickhouseFunnelStrictActors
+        else:
+            funnel_actor_class = ClickhouseFunnelActors
+
+    return funnel_actor_class
+
+
+_PERSON_ID_PARAMETER = OpenApiParameter(
+    "id",
+    OpenApiTypes.STR,
+    location=OpenApiParameter.PATH,
+    description="A unique value identifying this person. Accepts both numeric ID and UUID.",
+)
+
+_id_schema = extend_schema(parameters=[_PERSON_ID_PARAMETER])
+
+
+@extend_schema(tags=[ProductKey.PERSONS])
+@extend_schema_view(
+    retrieve=_id_schema,
+    update=_id_schema,
+    partial_update=_id_schema,
+    destroy=_id_schema,
+)
+class PersonViewSet(TeamAndOrgViewSetMixin, viewsets.ModelViewSet):
+    """
+    This endpoint is meant for reading and deleting persons. To create or update persons, we recommend using the [capture API](https://posthog.com/docs/api/capture), the `$set` and `$unset` [properties](https://posthog.com/docs/product-analytics/user-properties), or one of our SDKs.
+    """
+
+    scope_object = "person"
+    renderer_classes = cast(
+        tuple[type[BaseRenderer], ...],
+        (*tuple(api_settings.DEFAULT_RENDERER_CLASSES), csvrenderers.PaginatedCSVRenderer),
+    )
+    parser_classes = [JSONParser]
+    queryset = Person.objects.all()
+    serializer_class = PersonSerializer
+    pagination_class = PersonLimitOffsetPagination
+    lifecycle_class = Lifecycle
+
+    def get_throttles(self):
+        # API is commonly used for data deletion, so we want to throttle that less aggressively
+        if isinstance(self.request.successful_authenticator, PersonalAPIKeyAuthentication):
+            if self.action in ("destroy", "bulk_delete", "delete_events", "delete_recordings"):
+                return [PersonsDeleteBurstThrottle(), PersonsDeleteSustainedThrottle()]
+            else:
+                return [ClickHouseBurstRateThrottle()]
+
+        # We have seen issues in the past with the app hammering the API so for app authenticated requests
+        # we still want some throttle protection
+        return [
+            PersonsWebBurstThrottle(),
+            PersonsWebSustainedThrottle(),
+        ]
+
+    def safely_get_queryset(self, queryset):
+        queryset = queryset.prefetch_related(
+            Prefetch(
+                "persondistinctid_set",
+                queryset=PersonDistinctId.objects.filter(team_id=self.team_id).order_by("id"),
+                to_attr="distinct_ids_cache",
+            )
+        )
+        queryset = queryset.only("id", "created_at", "properties", "uuid", "is_identified")
+        return queryset
+
+    def safely_get_object(self, queryset):
+        person_id = self.kwargs[self.lookup_field]
+
+        try:
+            queryset = get_pk_or_uuid(queryset, person_id)
+        except ValueError:
+            raise ValidationError(
+                f"The ID provided does not look like a personID. If you are using a distinctId, please use /persons?distinct_id={person_id} instead."
+            )
+        return get_object_or_404(queryset)
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "email",
+                OpenApiTypes.STR,
+                description="Filter persons by email (exact match)",
+                examples=[OpenApiExample(name="email", value="test@test.com")],
+            ),
+            OpenApiParameter(
+                "distinct_id",
+                OpenApiTypes.STR,
+                description="Filter list by distinct id.",
+            ),
+            OpenApiParameter(
+                "search",
+                OpenApiTypes.STR,
+                description="Search persons, either by email (full text search) or distinct_id (exact match).",
+            ),
+            PersonPropertiesSerializer(required=False),
+        ],
+    )
+    def list(self, request: request.Request, *args: Any, **kwargs: Any) -> response.Response:
+        team = self.team
+        filter = Filter(request=request, team=self.team)
+
+        assert request.user.is_authenticated
+
+        is_csv_request = self.request.accepted_renderer.format == "csv"
+        if is_csv_request:
+            filter = filter.shallow_clone({LIMIT: CSV_EXPORT_LIMIT, OFFSET: 0})
+        elif not filter.limit:
+            filter = filter.shallow_clone({LIMIT: DEFAULT_PAGE_LIMIT})
+
+        person_query = PersonQuery(filter, team.pk)
+        paginated_query, paginated_params = person_query.get_query(paginate=True, filter_future_persons=True)
+
+        raw_paginated_result = insight_sync_execute(
+            paginated_query,
+            {**paginated_params, **filter.hogql_context.values},
+            filter=filter,
+            query_type="person_list",
+            team_id=team.pk,
+            # workload=Workload.OFFLINE,  # this endpoint is only used by external API requests
+        )
+        actor_ids = [row[0] for row in raw_paginated_result]
+        serialized_actors = get_serialized_people(team, actor_ids)
+        _should_paginate = len(actor_ids) >= filter.limit
+
+        # If the undocumented include_total param is set to true, we'll return the total count of people
+        # This is extra time and DB load, so we only do this when necessary, which is in PostHog 3000 navigation
+        # TODO: Use a more scalable solution before PostHog 3000 navigation is released, and remove this param
+        total_count: Optional[int] = None
+        if "include_total" in request.GET:
+            total_query, total_params = person_query.get_query(paginate=False, filter_future_persons=True)
+            total_query_aggregated = f"SELECT count() FROM ({total_query})"
+            raw_paginated_result = insight_sync_execute(
+                total_query_aggregated,
+                {**total_params, **filter.hogql_context.values},
+                filter=filter,
+                query_type="person_list_total",
+                team_id=team.pk,
+            )
+            total_count = raw_paginated_result[0][0]
+
+        next_url = format_query_params_absolute_url(request, filter.offset + filter.limit) if _should_paginate else None
+        previous_url = (
+            format_query_params_absolute_url(request, filter.offset - filter.limit)
+            if filter.offset - filter.limit >= 0
+            else None
+        )
+
+        # TEMPORARY: Work out usage patterns of this endpoint
+        renderer = SafeJSONRenderer()
+        size = len(renderer.render(serialized_actors))
+        API_PERSON_LIST_BYTES_READ_FROM_POSTGRES_COUNTER.labels(team_id=team.pk).inc(size)
+
+        return Response(
+            {
+                "results": serialized_actors,
+                "next": next_url,
+                "previous": previous_url,
+                **({"count": total_count} if total_count is not None else {}),
+            }
+        )
+
+    @extend_schema(
+        exclude=True,  # NOTE: We exclude as we want to push people to use the more powerful bulk_delete endpoint
+        parameters=[
+            OpenApiParameter(
+                "delete_events",
+                OpenApiTypes.BOOL,
+                description="If true, a task to delete all events associated with this person will be created and queued. The task does not run immediately and instead is batched together and at 5AM UTC every Sunday",
+                default=False,
+            ),
+        ],
+    )
+    def destroy(self, request: request.Request, pk=None, **kwargs):
+        """
+        Use this endpoint to delete individual persons. For bulk deletion, use the bulk_delete endpoint instead.
+        """
+        try:
+            person = self.get_object()
+            # Convert query params to request data format expected by bulk_delete
+            self._bulk_delete_persons(
+                request=request,
+                ids=[str(person.uuid)],
+                delete_events="delete_events" in request.GET,
+                delete_recordings="delete_recordings" in request.GET,
+                keep_person="keep_person" in request.GET,
+            )
+            return response.Response(status=202)
+
+        except Person.DoesNotExist:
+            raise NotFound(detail="Person not found.")
+
+    @extend_schema(
+        request=PersonBulkDeleteRequestSerializer,
+        responses={202: PersonBulkDeleteResponseSerializer},
+    )
+    @action(methods=["POST"], detail=False, required_scopes=["person:write"])
+    def bulk_delete(self, request: request.Request, pk=None, **kwargs):
+        """
+        This endpoint allows you to bulk delete persons, either by the PostHog person IDs or by distinct IDs. You can pass in a maximum of 1000 IDs per call. Only events captured before the request will be deleted.
+        """
+
+        delete_events = bool(request.data.get("delete_events"))
+        delete_recordings = bool(request.data.get("delete_recordings"))
+        keep_person = bool(request.data.get("keep_person"))
+
+        summary = self._bulk_delete_persons(
+            request=request,
+            distinct_ids=request.data.get("distinct_ids"),
+            ids=request.data.get("ids"),
+            delete_events=delete_events,
+            delete_recordings=delete_recordings,
+            keep_person=keep_person,
+        )
+
+        return response.Response(data=summary, status=202)
+
+    def _bulk_delete_persons(
+        self,
+        request: request.Request,
+        distinct_ids: builtins.list[str] | None = None,
+        ids: builtins.list[str] | None = None,
+        delete_events: bool = False,
+        delete_recordings: bool = False,
+        keep_person: bool = False,
+    ) -> dict[str, Any]:
+        """
+        This method is meant to be the canonical way to delete anything via the Persons API.
+        """
+
+        if distinct_ids:
+            if len(distinct_ids) > 1000:
+                raise ValidationError("You can only pass 1000 distinct_ids in one call")
+            # Optimize query by avoiding expensive JOIN - first get person_ids, then fetch persons
+            person_ids = PersonDistinctId.objects.filter(
+                team_id=self.team_id, distinct_id__in=distinct_ids
+            ).values_list("person_id", flat=True)
+            persons_queryset = self.get_queryset().filter(id__in=person_ids, team_id=self.team_id).defer("properties")
+        elif ids:
+            if len(ids) > 1000:
+                raise ValidationError("You can only pass 1000 ids in one call")
+            persons_queryset = self.get_queryset().filter(uuid__in=ids, team_id=self.team_id).defer("properties")
+        else:
+            raise ValidationError("You need to specify either distinct_ids or ids")
+
+        # Materialize queryset once before any deletions to avoid re-evaluating
+        # after records are deleted (which would return empty results)
+        persons = list(persons_queryset)
+
+        persons_deleted = 0
+        errors: builtins.list[dict[str, str]] = []
+        deleted_persons: builtins.list[Person] = []
+        if not keep_person:
+            # Send ClickHouse deletion events and log activity per person
+            for person in persons:
+                try:
+                    delete_person(person=person)
+                    persons_deleted += 1
+                    deleted_persons.append(person)
+                except Exception:
+                    logger.exception("Failed to delete person", person_uuid=str(person.uuid))
+                    errors.append({"person_uuid": str(person.uuid)})
+                    continue
+                log_activity(
+                    organization_id=self.organization.id,
+                    team_id=self.team_id,
+                    user=cast(User, request.user),
+                    was_impersonated=is_impersonated_session(request),
+                    item_id=person.pk,
+                    scope="Person",
+                    activity="deleted",
+                    detail=Detail(name=str(person.uuid)),
+                )
+            # Postgres deletes happen after CH deletes. If the Postgres batch fails,
+            # persons may remain in Postgres that are already marked deleted in ClickHouse.
+            delete_persons_from_postgres(self.team_id, deleted_persons)
+
+        if delete_events:
+            self._queue_event_deletion(persons)
+
+        if delete_recordings:
+            self._queue_delete_recordings(persons)
+
+        return {
+            "persons_found": len(persons),
+            "persons_deleted": persons_deleted,
+            "events_queued_for_deletion": delete_events and len(persons) > 0,
+            "recordings_queued_for_deletion": delete_recordings and len(persons) > 0,
+            "deletion_errors": errors,
+        }
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "status",
+                OpenApiTypes.STR,
+                description="Filter by deletion status: 'pending', 'completed', or 'all'.",
+                required=False,
+                enum=["pending", "completed", "all"],
+            ),
+            OpenApiParameter(
+                "person_uuid",
+                OpenApiTypes.UUID,
+                description="Filter by a specific person UUID.",
+                required=False,
+            ),
+        ],
+        responses={200: AsyncDeletionStatusSerializer(many=True)},
+    )
+    @action(methods=["GET"], detail=False, required_scopes=["person:read"])
+    def deletion_status(self, request: request.Request, **kwargs):
+        """
+        List the status of queued event deletions for persons. When you delete a person with `delete_events=true`, an async deletion is queued. Use this endpoint to check whether those deletions are still pending or have been completed.
+        """
+        params = DeletionStatusQueryParamsSerializer(data=request.query_params)
+        params.is_valid(raise_exception=True)
+
+        queryset = AsyncDeletion.objects.filter(
+            team_id=self.team_id,
+            deletion_type=DeletionType.Person,
+        ).order_by("-created_at")
+
+        status_filter = params.validated_data.get("status", "all")
+        if status_filter == "pending":
+            queryset = queryset.filter(delete_verified_at__isnull=True)
+        elif status_filter == "completed":
+            queryset = queryset.filter(delete_verified_at__isnull=False)
+
+        person_uuid = params.validated_data.get("person_uuid")
+        if person_uuid:
+            queryset = queryset.filter(key=str(person_uuid))
+
+        paginator = DeletionStatusPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = AsyncDeletionStatusSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "key",
+                OpenApiTypes.STR,
+                description="The person property key to get values for (e.g., 'email', 'plan', 'role').",
+                required=True,
+            ),
+            OpenApiParameter(
+                "value",
+                OpenApiTypes.STR,
+                description="Optional search string to filter values (case-insensitive substring match).",
+                required=False,
+            ),
+        ]
+    )
+    @action(methods=["GET"], detail=False, required_scopes=["person:read"])
+    def values(self, request: request.Request, **kwargs) -> response.Response:
+        from posthog.hogql_queries.property_values_query_runner import (
+            CachedPropertyValuesQueryResponse,
+            PropertyType,
+            PropertyValuesQuery,
+            PropertyValuesQueryResponse,
+            PropertyValuesQueryRunner,
+        )
+        from posthog.hogql_queries.query_runner import ExecutionMode, execution_mode_from_refresh
+
+        with (
+            PROPERTY_VALUES_DURATION.labels(endpoint_type="person").time(),
+            tracer.start_as_current_span("person_api_property_values") as span,
+        ):
+            key = request.GET.get("key")
+            value = request.GET.get("value")
+
+            span.set_attribute("team_id", self.team.pk)
+            span.set_attribute("property_key", key or "")
+            span.set_attribute("has_value_filter", value is not None)
+
+            if not key or key.startswith("$virt"):
+                span.set_attribute("result_count", 0)
+                resp = response.Response({"results": [], "refreshing": False})
+                resp["Cache-Control"] = "max-age=10"
+                return resp
+
+            tag_queries(product=ProductKey.PRODUCT_ANALYTICS, feature=Feature.QUERY)
+            refresh = refresh_requested_by_client(request)
+            runner = PropertyValuesQueryRunner(
+                team=self.team,
+                query=PropertyValuesQuery(
+                    property_type=PropertyType.PERSON,
+                    property_key=key,
+                    search_value=value,
+                ),
+            )
+            execution_mode = execution_mode_from_refresh(refresh)
+            if execution_mode == ExecutionMode.CACHE_ONLY_NEVER_CALCULATE and not refresh:
+                execution_mode = ExecutionMode.RECENT_CACHE_CALCULATE_ASYNC_IF_STALE_AND_BLOCKING_ON_MISS
+            result = runner.run(execution_mode, analytics_props=get_request_analytics_properties(request))
+            assert isinstance(result, (PropertyValuesQueryResponse, CachedPropertyValuesQueryResponse))
+            is_refreshing = (
+                isinstance(result, CachedPropertyValuesQueryResponse)
+                and result.query_status is not None
+                and not result.query_status.complete
+            )
+            results = [item.model_dump(exclude_none=True) for item in result.results]
+            span.set_attribute("result_count", len(results))
+            span.set_attribute("is_refreshing", is_refreshing)
+            resp = response.Response({"results": results, "refreshing": is_refreshing})
+            resp["Cache-Control"] = "max-age=10"
+            return resp
+
+    @action(methods=["POST"], detail=True, required_scopes=["person:write"])
+    def split(self, request: request.Request, pk=None, **kwargs) -> response.Response:
+        person: Person = self.get_object()
+        distinct_ids = person.distinct_ids
+
+        main_distinct_id = request.data.get("main_distinct_id")
+        distinct_ids_to_split = request.data.get("distinct_ids_to_split")
+
+        if distinct_ids_to_split is not None:
+            if not isinstance(distinct_ids_to_split, list) or not all(
+                isinstance(did, str) for did in distinct_ids_to_split
+            ):
+                raise ValidationError({"distinct_ids_to_split": "must be a list of strings"})
+            if not distinct_ids_to_split:
+                raise ValidationError({"distinct_ids_to_split": "must not be empty"})
+            if main_distinct_id is not None:
+                raise ValidationError("main_distinct_id cannot be combined with distinct_ids_to_split")
+            unknown = set(distinct_ids_to_split) - set(distinct_ids)
+            if unknown:
+                raise ValidationError({"distinct_ids_to_split": f"not on this person: {sorted(unknown)}"})
+
+        split_person.delay(
+            person.id,
+            person.team_id,
+            main_distinct_id,
+            None,
+            distinct_ids_to_split=distinct_ids_to_split,
+        )
+
+        activity_after: dict = {"distinct_ids": distinct_ids}
+        if distinct_ids_to_split is not None:
+            activity_after["distinct_ids_to_split"] = list(distinct_ids_to_split)
+
+        log_activity(
+            organization_id=self.organization.id,
+            team_id=self.team.id,
+            user=cast(User, request.user),
+            was_impersonated=is_impersonated_session(request),
+            item_id=person.id,
+            scope="Person",
+            activity="split_person",
+            detail=Detail(
+                name=str(person.uuid),
+                changes=[
+                    Change(
+                        type="Person",
+                        action="split",
+                        after=activity_after,
+                    )
+                ],
+            ),
+        )
+
+        return response.Response({"success": True}, status=201)
+
+    @extend_schema(request=PersonUpdatePropertyRequestSerializer, parameters=[_PERSON_ID_PARAMETER])
+    @action(methods=["POST"], detail=True, required_scopes=["person:write"])
+    def update_property(self, request: request.Request, pk=None, **kwargs) -> response.Response:
+        if "value" not in request.data:
+            return Response(
+                {
+                    "attr": "value",
+                    "code": "This field is required.",
+                    "detail": "required",
+                    "type": "validation_error",
+                },
+                status=400,
+            )
+        if request.data.get("key") is None:
+            return Response(
+                {
+                    "attr": "key",
+                    "code": "This field is required.",
+                    "detail": "required",
+                    "type": "validation_error",
+                },
+                status=400,
+            )
+        self._set_properties({request.data["key"]: request.data["value"]}, request.user)
+        return Response(status=202)
+
+    @extend_schema(request=PersonDeletePropertyRequestSerializer, parameters=[_PERSON_ID_PARAMETER])
+    @action(methods=["POST"], detail=True, required_scopes=["person:write"])
+    def delete_property(self, request: request.Request, pk=None, **kwargs) -> response.Response:
+        person = get_person_by_pk_or_uuid(self.team_id, pk)
+        if person is None:
+            raise Person.DoesNotExist
+
+        event_name = "$delete_person_property"
+        distinct_id = person.distinct_ids[0]
+        timestamp = datetime.now(UTC)
+        properties = {
+            "$unset": [request.data["$unset"]],
+        }
+
+        try:
+            resp = capture_internal(
+                token=self.team.api_token,
+                event_name=event_name,
+                event_source="person_viewset",
+                distinct_id=distinct_id,
+                timestamp=timestamp,
+                properties=properties,
+                process_person_profile=True,
+            )
+            resp.raise_for_status()
+
+        # HTTP error - if applicable, thrown after retires are exhausted
+        except HTTPError as he:
+            logger.warning(
+                "delete_person_property.capture_http_error",
+                team_id=self.team_id,
+                person_uuid=str(person.uuid),
+                property_key=request.data.get("$unset"),
+                status_code=he.response.status_code,
+            )
+            return response.Response(
+                {
+                    "success": False,
+                    "detail": "Unable to delete property",
+                },
+                status=he.response.status_code,
+            )
+
+        # catches event payload errors (CaptureInternalError) and misc. (timeout etc.)
+        except Exception:
+            logger.exception(
+                "delete_person_property.capture_error",
+                team_id=self.team_id,
+                person_uuid=str(person.uuid),
+                property_key=request.data.get("$unset"),
+            )
+            return response.Response(
+                {
+                    "success": False,
+                    "detail": "Unable to delete property",
+                },
+                status=400,
+            )
+
+        log_activity(
+            organization_id=self.organization.id,
+            team_id=self.team.id,
+            user=cast(User, request.user),
+            was_impersonated=is_impersonated_session(request),
+            item_id=person.id,
+            scope="Person",
+            activity="delete_property",
+            detail=Detail(name=str(person.uuid), changes=[Change(type="Person", action="changed")]),
+        )
+
+        return response.Response({"success": True}, status=201)
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "person_id",
+                OpenApiTypes.STR,
+                description="The person ID or UUID to get cohorts for.",
+                required=True,
+            ),
+        ]
+    )
+    @action(methods=["GET"], detail=False, required_scopes=["person:read", "cohort:read"])
+    def cohorts(self, request: request.Request, **kwargs) -> response.Response:
+        from posthog.api.cohort import CohortMinimalSerializer
+
+        team = cast(User, request.user).team
+        if not team:
+            return response.Response(
+                {
+                    "message": "Could not retrieve team",
+                    "detail": "Could not validate team associated with user",
+                },
+                status=400,
+            )
+
+        person = get_pk_or_uuid(self.get_queryset(), request.GET["person_id"]).get()
+        cohort_ids = get_all_cohort_ids_by_person_uuid(person.uuid, team.pk)
+
+        # nosemgrep: idor-lookup-without-team, idor-taint-user-input-to-model-get (IDs from team-scoped ClickHouse query)
+        cohorts = Cohort.objects.filter(pk__in=cohort_ids, deleted=False)
+
+        return response.Response({"results": CohortMinimalSerializer(cohorts, many=True).data})
+
+    @extend_schema(operation_id="persons_all_activity_retrieve")
+    @action(methods=["GET"], url_path="activity", detail=False, required_scopes=["activity_log:read"])
+    def all_activity(self, request: request.Request, **kwargs):
+        limit = int(request.query_params.get("limit", "10"))
+        page = int(request.query_params.get("page", "1"))
+
+        activity_page = load_activity(scope="Person", team_id=self.team_id, limit=limit, page=page)
+        return activity_page_response(activity_page, limit, page, request)
+
+    @action(methods=["GET"], detail=True, required_scopes=["activity_log:read"])
+    def activity(self, request: request.Request, pk=None, **kwargs):
+        limit = int(request.query_params.get("limit", "10"))
+        page = int(request.query_params.get("page", "1"))
+        item_id = None
+        if pk:
+            person = self.get_object()
+            item_id = person.pk
+
+        activity_page = load_activity(
+            scope="Person",
+            team_id=self.team_id,
+            item_ids=[item_id] if item_id else None,
+            limit=limit,
+            page=page,
+        )
+        return activity_page_response(activity_page, limit, page, request)
+
+    def update(self, request, *args, **kwargs):
+        """
+        Only for setting properties on the person. "properties" from the request data will be updated via a "$set" event.
+        This means that only the properties listed will be updated, but other properties won't be removed nor updated.
+        If you would like to remove a property use the `delete_property` endpoint.
+        """
+        if request.data.get("properties") is None:
+            return Response(
+                {
+                    "attr": "properties",
+                    "code": "This field is required.",
+                    "detail": "required",
+                    "type": "validation_error",
+                },
+                status=400,
+            )
+        self._set_properties(request.data["properties"], request.user)
+        return Response(status=202)
+
+    @extend_schema(exclude=True)
+    def create(self, *args, **kwargs):
+        raise MethodNotAllowed(
+            method="POST",
+            detail="Creating persons via this API is not allowed. Please create persons by sending an $identify event. See https://posthog.com/docs/product-analytics/identify for details.",
+        )
+
+    def _set_properties(self, properties, user):
+        instance = self.get_object()
+        distinct_id = instance.distinct_ids[0]
+        event_name = "$set"
+        timestamp = datetime.now(UTC)
+        properties = {
+            "$set": properties,
+        }
+
+        try:
+            resp = capture_internal(
+                token=self.team.api_token,
+                event_name=event_name,
+                event_source="person_viewset",
+                distinct_id=distinct_id,
+                timestamp=timestamp,
+                properties=properties,
+                process_person_profile=True,
+            )
+            resp.raise_for_status()
+
+        # Failures in this codepath (old and new) are ignored here
+        except Exception:
+            pass
+
+        if self.organization.id:  # should always be true, but mypy...
+            log_activity(
+                organization_id=self.organization.id,
+                team_id=self.team.id,
+                user=user,
+                was_impersonated=is_impersonated_session(self.request),
+                item_id=instance.pk,
+                scope="Person",
+                activity="updated",
+                detail=Detail(changes=[Change(type="Person", action="changed", field="properties")]),
+            )
+
+    # PRAGMA: Methods for getting Persons via clickhouse queries
+    def _respond_with_cached_results(
+        self, results_package: dict[str, tuple[builtins.list, Optional[str], Optional[str], int]]
+    ):  # noqa: UP006
+        if not results_package:
+            return response.Response(data=[])
+
+        actors, next_url, initial_url, missing_persons = results_package["result"]
+
+        return response.Response(
+            data={
+                "results": [{"people": actors, "count": len(actors)}],
+                "next": next_url,
+                "initial": initial_url,
+                "missing_persons": missing_persons,
+                "is_cached": results_package.get("is_cached"),
+                "last_refresh": results_package.get("last_refresh"),
+            }
+        )
+
+    @action(methods=["GET", "POST"], detail=False)
+    def funnel(self, request: request.Request, **kwargs) -> response.Response:
+        capture_legacy_api_call(request, self.team)
+
+        if request.user.is_anonymous or not self.team:
+            return response.Response(data=[])
+
+        return self._respond_with_cached_results(self.calculate_funnel_persons(request))
+
+    @cached_by_filters
+    def calculate_funnel_persons(
+        self, request: request.Request
+    ) -> dict[str, tuple[List, Optional[str], Optional[str], int]]:  # noqa: UP006
+        filter = Filter(request=request, data={"insight": INSIGHT_FUNNELS}, team=self.team)
+        filter = prepare_actor_query_filter(filter)
+        funnel_actor_class = get_funnel_actor_class(filter)
+
+        actors, serialized_actors, raw_count = funnel_actor_class(filter, self.team).get_actors()
+        initial_url = format_query_params_absolute_url(request, 0)
+        next_url = paginated_result(request, raw_count, filter.offset, filter.limit)
+
+        # cached_function expects a dict with the key result
+        return {
+            "result": (
+                serialized_actors,
+                next_url,
+                initial_url,
+                raw_count - len(serialized_actors),
+            )
+        }
+
+    @action(methods=["GET"], detail=False)
+    def trends(self, request: request.Request, *args: Any, **kwargs: Any) -> Response:
+        capture_legacy_api_call(request, self.team)
+
+        if request.user.is_anonymous or not self.team:
+            return response.Response(data=[])
+
+        return self._respond_with_cached_results(self.calculate_trends_persons(request))
+
+    @cached_by_filters
+    def calculate_trends_persons(
+        self, request: request.Request
+    ) -> dict[str, tuple[List, Optional[str], Optional[str], int]]:  # noqa: UP006
+        filter = Filter(request=request, team=self.team)
+        filter = prepare_actor_query_filter(filter)
+        entity = get_target_entity(filter)
+
+        actors, serialized_actors, raw_count = TrendsActors(self.team, entity, filter).get_actors()
+        next_url = paginated_result(request, raw_count, filter.offset, filter.limit)
+        initial_url = format_query_params_absolute_url(request, 0)
+
+        # cached_function expects a dict with the key result
+        return {
+            "result": (
+                serialized_actors,
+                next_url,
+                initial_url,
+                raw_count - len(serialized_actors),
+            )
+        }
+
+    @action(methods=["GET"], detail=True)
+    def properties_timeline(self, request: request.Request, *args: Any, **kwargs: Any) -> Response:
+        if request.user.is_anonymous or not self.team:
+            return response.Response(data=[])
+
+        person = self.get_object()
+        filter = PropertiesTimelineFilter(request=request, team=self.team)
+
+        properties_timeline = PropertiesTimeline().run(filter, self.team, person)
+
+        return response.Response(data=properties_timeline)
+
+    @action(methods=["GET"], detail=False)
+    def lifecycle(self, request: request.Request) -> response.Response:
+        team = cast(User, request.user).team
+        if not team:
+            return response.Response(
+                {
+                    "message": "Could not retrieve team",
+                    "detail": "Could not validate team associated with user",
+                },
+                status=400,
+            )
+
+        target_date = request.GET.get("target_date", None)
+        if target_date is None:
+            return response.Response(
+                {
+                    "message": "Missing parameter",
+                    "detail": "Must include specified date",
+                },
+                status=400,
+            )
+        lifecycle_type = request.GET.get("lifecycle_type", None)
+        if lifecycle_type is None:
+            return response.Response(
+                {
+                    "message": "Missing parameter",
+                    "detail": "Must include lifecycle type",
+                },
+                status=400,
+            )
+
+        filter = LifecycleFilter(request=request, data=request.GET.dict(), team=self.team)
+        filter = prepare_actor_query_filter(filter)
+
+        people = self.lifecycle_class().get_people(
+            filter=filter,
+            team=team,
+        )
+        next_url = paginated_result(request, len(people), filter.offset, filter.limit)
+        return response.Response({"results": [{"people": people, "count": len(people)}], "next": next_url})
+
+    @extend_schema(
+        exclude=True,  # NOTE: We exclude as we want to push people to use the more powerful bulk_delete endpoint
+        description="Queue deletion of all recordings associated with this person.",
+    )
+    @action(methods=["POST"], detail=True, required_scopes=["person:write"])
+    def delete_recordings(self, request: request.Request, pk=None, **kwargs) -> response.Response:
+        """
+        [DEPRECATED] Queue deletion of all recordings for a person without deleting the person record itself.
+        """
+        try:
+            person = self.get_object()
+            self._queue_delete_recordings([person])
+            return response.Response(status=202)
+        except Person.DoesNotExist:
+            raise NotFound(detail="Person not found.")
+
+    @extend_schema(
+        exclude=True,  # NOTE: We exclude as we want to push people to use the more powerful bulk_delete endpoint
+        description="Queue deletion of all events associated with this person. The task runs during non-peak hours.",
+    )
+    @action(methods=["POST"], detail=True, required_scopes=["person:write"])
+    def delete_events(self, request: request.Request, pk=None, **kwargs) -> response.Response:
+        """
+        [DEPRECATED] Queue deletion of all events for a person without deleting the person record itself.
+        The deletion task runs during non-peak hours.
+        """
+        try:
+            person = self.get_object()
+            self._queue_event_deletion([person])
+            return response.Response(status=202)
+        except Person.DoesNotExist:
+            raise NotFound(detail="Person not found.")
+
+    @extend_schema(
+        description="Reset a distinct_id for a deleted person. This allows the distinct_id to be used again.",
+    )
+    @action(methods=["POST"], detail=False, required_scopes=["person:write"])
+    def reset_person_distinct_id(self, request: request.Request, *args: Any, **kwargs: Any) -> response.Response:
+        distinct_id = request.data.get("distinct_id")
+        if not distinct_id or not isinstance(distinct_id, str):
+            raise ValidationError(detail="distinct_id is required")
+
+        reset_deleted_person_distinct_ids(self.team_id, distinct_id)
+
+        return response.Response(status=202)
+
+    @action(methods=["POST"], detail=False, url_path="batch_by_distinct_ids")
+    def batch_by_distinct_ids(self, request: request.Request, *args: Any, **kwargs: Any) -> response.Response:
+        distinct_ids = request.data.get("distinct_ids", [])
+
+        if not isinstance(distinct_ids, list) or len(distinct_ids) == 0:
+            return response.Response({"results": {}})
+
+        MAX_BATCH_SIZE = 200
+        distinct_ids = distinct_ids[:MAX_BATCH_SIZE]
+
+        persons = get_persons_by_distinct_ids(self.team_id, distinct_ids)
+
+        requested = set(distinct_ids)
+        results: dict[str, Any] = {}
+        for person in persons:
+            person_data = MinimalPersonSerializer(person, context={"get_team": lambda: self.team}).data
+
+            for distinct_id in person.distinct_ids:
+                if distinct_id in requested:
+                    results[distinct_id] = person_data
+
+        return response.Response({"results": results})
+
+    @action(methods=["POST"], detail=False, url_path="batch_by_uuids")
+    def batch_by_uuids(self, request: request.Request, *args: Any, **kwargs: Any) -> response.Response:
+        uuids = request.data.get("uuids", [])
+
+        if not isinstance(uuids, list) or len(uuids) == 0:
+            return response.Response({"results": {}})
+
+        MAX_BATCH_SIZE = 200
+        uuids = uuids[:MAX_BATCH_SIZE]
+
+        try:
+            uuids = [str(uuid.UUID(u)) for u in uuids]
+        except (ValueError, AttributeError):
+            raise ValidationError("One or more UUIDs are invalid.")
+
+        persons = get_persons_by_uuids(self.team, uuids)
+
+        results: dict[str, Any] = {}
+        for person in persons:
+            results[str(person.uuid)] = MinimalPersonSerializer(person, context={"get_team": lambda: self.team}).data
+
+        return response.Response({"results": results})
+
+    def _queue_event_deletion(self, persons: builtins.list[Person]) -> None:
+        """Helper to queue deletion of all events for a person."""
+        AsyncDeletion.objects.bulk_create(
+            [
+                AsyncDeletion(
+                    deletion_type=DeletionType.Person,
+                    team_id=self.team_id,
+                    key=str(person.uuid),
+                    created_by=cast(User, self.request.user),
+                )
+                for person in persons
+            ],
+            ignore_conflicts=True,
+        )
+
+    def _queue_delete_recordings(self, persons: builtins.list[Person]) -> None:
+        if not persons:
+            return
+
+        temporal = sync_connect()
+
+        async def start_all_workflows():
+            tasks = []
+            for person in persons:
+                workflow_input = RecordingsWithPersonInput(
+                    distinct_ids=person.distinct_ids,
+                    team_id=self.team_id,
+                    config=DeletionConfig(deleted_by=cast(User, self.request.user).email, reason="person deletion"),
+                )
+                workflow_id = f"delete-recordings-{self.team_id}-person-{person.uuid}-{uuid.uuid4()}"
+                tasks.append(
+                    temporal.start_workflow(
+                        "delete-recordings-with-person",
+                        workflow_input,
+                        id=workflow_id,
+                        task_queue=settings.SESSION_REPLAY_TASK_QUEUE,
+                        retry_policy=common.RetryPolicy(
+                            maximum_attempts=2,
+                            initial_interval=timedelta(minutes=1),
+                        ),
+                    )
+                )
+            await asyncio.gather(*tasks)
+
+        asyncio.run(start_all_workflows())
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="distinct_id",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                description="The distinct_id of the person (mutually exclusive with person_id)",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="person_id",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                description="The person_id (UUID) to build properties for (mutually exclusive with distinct_id)",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="timestamp",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                description="ISO datetime string for the point in time (e.g., '2023-06-15T14:30:00Z')",
+                required=True,
+            ),
+            OpenApiParameter(
+                name="include_set_once",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                description="Whether to handle $set_once operations (default: false)",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="debug",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                description="Whether to include debug information with raw events (only works when DEBUG=True, default: false)",
+                required=False,
+            ),
+        ],
+        responses={
+            200: PersonPropertiesAtTimeResponseSerializer,
+            400: {"description": "Bad request - invalid parameters"},
+            404: {"description": "Person not found"},
+            500: {"description": "Internal server error"},
+        },
+        tags=["persons"],
+    )
+    @action(methods=["GET"], detail=False, required_scopes=["person:read"])
+    def properties_at_time(self, request: request.Request) -> response.Response:
+        """
+        Get person properties as they existed at a specific point in time.
+
+        This endpoint reconstructs person properties by querying ClickHouse events
+        for $set and $set_once operations up to the specified timestamp.
+
+        Query parameters:
+        - distinct_id: The distinct_id of the person
+        - timestamp: ISO datetime string for the point in time (e.g., "2023-06-15T14:30:00Z")
+        - include_set_once: Whether to handle $set_once operations (default: false)
+        - debug: Whether to include debug information with raw events (default: false)
+        """
+        from posthog.models.person.point_in_time_properties import (
+            build_person_properties_at_time,
+            get_person_and_distinct_ids_for_identifier,
+        )
+
+        distinct_id = request.GET.get("distinct_id")
+        person_id = request.GET.get("person_id")
+        timestamp_str = request.GET.get("timestamp")
+        include_set_once = request.GET.get("include_set_once", "false").lower() == "true"
+        debug = request.GET.get("debug", "false").lower() == "true"
+
+        # Validate parameters
+        if distinct_id and person_id:
+            return response.Response(
+                {"error": "Cannot provide both distinct_id and person_id - choose one"},
+                status=400,
+            )
+
+        if not distinct_id and not person_id:
+            return response.Response(
+                {"error": "Must provide either distinct_id or person_id parameter"},
+                status=400,
+            )
+
+        if not timestamp_str:
+            return response.Response(
+                {"error": "timestamp parameter is required (ISO format: 2023-06-15T14:30:00Z)"},
+                status=400,
+            )
+
+        try:
+            # Parse timestamp - support both with and without timezone
+            if timestamp_str.endswith("Z"):
+                timestamp = datetime.fromisoformat(timestamp_str[:-1]).replace(tzinfo=UTC)
+            elif "+" in timestamp_str or timestamp_str.count("-") > 2:
+                timestamp = datetime.fromisoformat(timestamp_str)
+            else:
+                timestamp = datetime.fromisoformat(timestamp_str).replace(tzinfo=UTC)
+        except ValueError as e:
+            identifier = distinct_id or person_id
+            logger.warning(
+                "Invalid timestamp format for %s %s: %s", "distinct_id" if distinct_id else "person_id", identifier, e
+            )
+            return response.Response(
+                {"error": "Invalid timestamp format. Use ISO format like 2023-06-15T14:30:00Z"},
+                status=400,
+            )
+
+        try:
+            # Get person object and all distinct_ids in a single query
+            person, distinct_ids_queried = get_person_and_distinct_ids_for_identifier(
+                team_id=self.team_id,
+                distinct_id=distinct_id,
+                person_id=person_id,
+            )
+
+            if not person or not distinct_ids_queried:
+                identifier = distinct_id or person_id
+                identifier_type = "distinct_id" if distinct_id else "person_id"
+                return response.Response(
+                    {"error": f"Person with {identifier_type} '{identifier}' not found"},
+                    status=404,
+                )
+
+            # Build point-in-time properties using the pre-fetched distinct_ids
+            # If debug mode is enabled, get raw events to avoid duplicate query
+            debug_rows: list[Any] = []
+            debug_query: str = ""
+            debug_params: dict[str, Any] = {}
+            point_in_time_properties: dict[str, Any]
+            if debug and settings.DEBUG:
+                result = build_person_properties_at_time(
+                    team_id=self.team_id,
+                    timestamp=timestamp,
+                    distinct_ids=distinct_ids_queried,
+                    include_set_once=include_set_once,
+                    return_debug_info=True,
+                )
+                # Type cast to help mypy understand the tuple unpacking
+                point_in_time_properties, debug_rows, debug_query, debug_params = cast(
+                    tuple[dict[str, Any], list[Any], str, dict[str, Any]], result
+                )
+            else:
+                point_in_time_properties = cast(
+                    dict[str, Any],
+                    build_person_properties_at_time(
+                        team_id=self.team_id,
+                        timestamp=timestamp,
+                        distinct_ids=distinct_ids_queried,
+                        include_set_once=include_set_once,
+                    ),
+                )
+
+            # Serialize the person object
+            person_data = PersonSerializer(person, context={"get_team": lambda: self.team}).data
+
+            # Replace current properties with point-in-time properties
+            person_data["properties"] = point_in_time_properties
+
+            # Add metadata about the point-in-time query
+            person_data["point_in_time_metadata"] = {
+                "queried_timestamp": timestamp.isoformat(),
+                "include_set_once": include_set_once,
+                "distinct_id_used": distinct_id,
+                "person_id_used": person_id,
+                "query_mode": "distinct_id" if distinct_id else "person_id",
+                "distinct_ids_queried": distinct_ids_queried,
+                "distinct_ids_count": len(distinct_ids_queried),
+            }
+
+            # Add debug information if requested and in debug mode
+            if debug and settings.DEBUG:
+                # Use the raw events, query, and params that were already fetched to avoid duplicate query
+                person_data["debug"] = {
+                    "query": debug_query,
+                    "params": debug_params,
+                    "events_found": len(debug_rows),
+                    "events": [
+                        {"properties_json": row[0], "timestamp": str(row[1]), "event": row[2]} for row in debug_rows
+                    ],
+                }
+
+            return response.Response(person_data)
+
+        except Exception:
+            identifier = distinct_id or person_id
+            identifier_type = "distinct_id" if distinct_id else "person_id"
+            logger.exception(
+                "Failed to build person properties at time for %s %s",
+                identifier_type,
+                identifier,
+                distinct_id=distinct_id,
+                person_id=person_id,
+                timestamp=timestamp_str,
+            )
+            return response.Response(
+                {"error": f"Failed to retrieve person properties for {identifier_type} '{identifier}'"},
+                status=500,
+            )
+
+
+def paginated_result(
+    request: request.Request,
+    count: int,
+    offset: int = 0,
+    limit: int = DEFAULT_PAGE_LIMIT,
+) -> Optional[str]:
+    return format_paginated_url(request, offset, limit) if count >= limit else None
+
+
+T = TypeVar("T", Filter, PathFilter, RetentionFilter, LifecycleFilter)
+
+
+def prepare_actor_query_filter(filter: T) -> T:
+    if not filter.limit:
+        filter = filter.shallow_clone({LIMIT: DEFAULT_PAGE_LIMIT})
+
+    search = getattr(filter, "search", None)
+    if not search:
+        return filter
+
+    group_properties_filter_group: list[dict[str, object]] = []
+    if hasattr(filter, "aggregation_group_type_index"):
+        group_properties_filter_group += [
+            {
+                "key": "name",
+                "value": search,
+                "type": "group",
+                "group_type_index": filter.aggregation_group_type_index,
+                "operator": "icontains",
+            },
+            {
+                "key": "slug",
+                "value": search,
+                "type": "group",
+                "group_type_index": filter.aggregation_group_type_index,
+                "operator": "icontains",
+            },
+        ]
+
+    new_group = {
+        "type": "OR",
+        "values": [
+            {"key": "email", "type": "person", "value": search, "operator": "icontains"},
+            {"key": "name", "type": "person", "value": search, "operator": "icontains"},
+            {"key": "distinct_id", "type": "event", "value": search, "operator": "icontains"},
+            *group_properties_filter_group,
+        ],
+    }
+    prop_group = (
+        {"type": "AND", "values": [new_group, filter.property_groups.to_dict()]}
+        if filter.property_groups.to_dict()
+        else new_group
+    )
+
+    return filter.shallow_clone({"properties": prop_group, "search": None})
+
+
+class LegacyPersonViewSet(PersonViewSet):
+    param_derived_from_user_current_team = "team_id"

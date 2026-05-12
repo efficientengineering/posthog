@@ -1,0 +1,23 @@
+.SidePanel3000 {
+    z-index: var(--z-main-nav);
+    flex-shrink: 0;
+
+    &--open {
+        min-width: var(--side-panel-min-width);
+
+        @media (max-width: 1200px) {
+            position: fixed;
+            top: 0;
+            right: 0;
+            box-shadow: 0 0 30px rgb(0 0 0 / 20%);
+
+            [theme='dark'] & {
+                box-shadow: none;
+            }
+        }
+    }
+
+    &--resizing {
+        pointer-events: none;
+    }
+}

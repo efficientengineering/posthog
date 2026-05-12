@@ -1,0 +1,173 @@
+import { BindLogic, useActions, useValues } from 'kea'
+import { combineUrl, router } from 'kea-router'
+
+import { IconPause, IconPlay, IconTrash } from '@posthog/icons'
+import { LemonBanner, LemonDialog, LemonDivider } from '@posthog/lemon-ui'
+
+import { ActivityLog } from 'lib/components/ActivityLog/ActivityLog'
+import 'lib/lemon-ui/LemonModal/LemonModal'
+import { LemonTab, LemonTabs } from 'lib/lemon-ui/LemonTabs'
+import { ButtonPrimitive } from 'lib/ui/Button/ButtonPrimitives'
+import { SceneExport } from 'scenes/sceneTypes'
+import { urls } from 'scenes/urls'
+
+import { SceneContent } from '~/layout/scenes/components/SceneContent'
+import { ScenePanel, ScenePanelActionsSection } from '~/layout/scenes/SceneLayout'
+import { ProductKey } from '~/queries/schema/schema-general'
+import { ActivityScope } from '~/types'
+
+import { EndpointConfiguration } from './endpoint-tabs/EndpointConfiguration'
+import { EndpointOverview } from './endpoint-tabs/EndpointOverview'
+import { EndpointPlayground } from './endpoint-tabs/EndpointPlayground'
+import { EndpointQuery } from './endpoint-tabs/EndpointQuery'
+import { EndpointVersions } from './endpoint-tabs/EndpointVersions'
+import { VersionBanner } from './endpoint-tabs/VersionBanner'
+import { EndpointSceneHeader } from './EndpointHeader'
+import { endpointLogic } from './endpointLogic'
+import { EndpointTab, endpointSceneLogic } from './endpointSceneLogic'
+
+interface EndpointProps {
+    tabId?: string
+}
+
+export const scene: SceneExport = {
+    component: EndpointScene,
+    logic: endpointSceneLogic,
+    productKey: ProductKey.ENDPOINTS,
+}
+
+export function EndpointScene({ tabId }: EndpointProps = {}): JSX.Element {
+    if (!tabId) {
+        throw new Error('<EndpointScene /> must receive a tabId prop')
+    }
+    const { endpoint, endpointLoading, activeTab, viewingVersion } = useValues(endpointSceneLogic({ tabId }))
+    const { setViewingVersion } = useActions(endpointSceneLogic({ tabId }))
+    const { deleteEndpoint, confirmToggleActive } = useActions(endpointLogic({ tabId }))
+    const { searchParams } = useValues(router)
+
+    const tabs: LemonTab<EndpointTab>[] = [
+        {
+            key: EndpointTab.QUERY,
+            label: 'Query',
+            'data-attr': 'endpoint-query-tab',
+            content: <EndpointQuery tabId={tabId} />,
+            link: endpoint
+                ? combineUrl(urls.endpoint(endpoint.name), { ...searchParams, tab: EndpointTab.QUERY }).url
+                : undefined,
+        },
+        {
+            key: EndpointTab.CONFIGURATION,
+            label: 'Configuration',
+            'data-attr': 'endpoint-configuration-tab',
+            content: <EndpointConfiguration tabId={tabId} />,
+            link: endpoint
+                ? combineUrl(urls.endpoint(endpoint.name), { ...searchParams, tab: EndpointTab.CONFIGURATION }).url
+                : undefined,
+        },
+        {
+            key: EndpointTab.VERSIONS,
+            label: 'Versions',
+            content: <EndpointVersions tabId={tabId} />,
+            link: endpoint
+                ? combineUrl(urls.endpoint(endpoint.name), { ...searchParams, tab: EndpointTab.VERSIONS }).url
+                : undefined,
+        },
+        {
+            key: EndpointTab.PLAYGROUND,
+            label: 'Playground',
+            'data-attr': 'endpoint-playground-tab',
+            content: <EndpointPlayground tabId={tabId} />,
+            link: endpoint
+                ? combineUrl(urls.endpoint(endpoint.name), { ...searchParams, tab: EndpointTab.PLAYGROUND }).url
+                : undefined,
+        },
+        {
+            key: EndpointTab.HISTORY,
+            label: 'History',
+            'data-attr': 'endpoint-history-tab',
+            content: endpoint ? (
+                <ActivityLog scope={[ActivityScope.ENDPOINT, ActivityScope.ENDPOINT_VERSION]} id={endpoint.id} />
+            ) : (
+                <></>
+            ),
+            link: endpoint
+                ? combineUrl(urls.endpoint(endpoint.name), { ...searchParams, tab: EndpointTab.HISTORY }).url
+                : undefined,
+        },
+    ]
+
+    const handleDelete = (): void => {
+        if (!endpoint?.name) {
+            return
+        }
+
+        LemonDialog.open({
+            title: 'Delete endpoint?',
+            content: (
+                <div className="text-sm text-secondary">
+                    Are you sure you want to delete this endpoint? This action cannot be undone.
+                </div>
+            ),
+            primaryButton: {
+                children: 'Delete',
+                type: 'primary',
+                status: 'danger',
+                onClick: () => {
+                    deleteEndpoint(endpoint.name)
+                    router.actions.push(urls.endpoints())
+                },
+                size: 'small',
+            },
+            secondaryButton: {
+                children: 'Cancel',
+                type: 'tertiary',
+                size: 'small',
+            },
+        })
+    }
+
+    const handleToggleActive = (): void => {
+        if (!endpoint) {
+            return
+        }
+        confirmToggleActive(endpoint)
+    }
+
+    return (
+        <BindLogic logic={endpointSceneLogic} props={{ tabId }}>
+            <SceneContent className="Endpoint">
+                <EndpointSceneHeader tabId={tabId} />
+                {endpoint && !endpoint.is_active && (
+                    <LemonBanner type="error">
+                        This endpoint is deactivated and cannot be accessed via the API. <br />
+                        This applies to all versions, even if they're active - endpoint status overrules version status.
+                    </LemonBanner>
+                )}
+                {viewingVersion && endpoint && (
+                    <VersionBanner
+                        version={viewingVersion}
+                        currentVersion={endpoint.current_version}
+                        onGoToLatest={() => setViewingVersion(null)}
+                    />
+                )}
+                {!endpointLoading && <EndpointOverview tabId={tabId} />}
+                <LemonTabs activeKey={activeTab} tabs={tabs} />
+            </SceneContent>
+            {endpoint && (
+                <ScenePanel>
+                    <ScenePanelActionsSection>
+                        <ButtonPrimitive menuItem onClick={handleToggleActive}>
+                            {endpoint.is_active ? <IconPause /> : <IconPlay />}
+                            {endpoint.is_active ? 'Deactivate endpoint' : 'Activate endpoint'}
+                        </ButtonPrimitive>
+                        <LemonDivider />
+                        <ButtonPrimitive menuItem onClick={handleDelete} className="text-danger">
+                            <IconTrash />
+                            Delete endpoint
+                        </ButtonPrimitive>
+                    </ScenePanelActionsSection>
+                </ScenePanel>
+            )}
+        </BindLogic>
+    )
+}

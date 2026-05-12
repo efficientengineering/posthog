@@ -1,0 +1,44 @@
+import os
+
+from posthog.settings import TEST
+from posthog.settings.base_variables import DEBUG
+from posthog.settings.utils import get_from_env, str_to_bool
+
+DATAWAREHOUSE_LOCAL_BUCKET_REGION = os.getenv("DATAWAREHOUSE_LOCAL_BUCKET_REGION", "us-east-1")
+DATAWAREHOUSE_LOCAL_ACCESS_KEY = os.getenv("DATAWAREHOUSE_LOCAL_ACCESS_KEY", "object_storage_root_user")
+DATAWAREHOUSE_LOCAL_ACCESS_SECRET = os.getenv("DATAWAREHOUSE_LOCAL_ACCESS_SECRET", "object_storage_root_password")
+DATAWAREHOUSE_BUCKET_DOMAIN = os.getenv("DATAWAREHOUSE_BUCKET_DOMAIN", "objectstorage:19000")
+
+
+DATAWAREHOUSE_BUCKET = os.getenv("DATAWAREHOUSE_BUCKET", "data-warehouse")
+BUCKET_URL = os.getenv("BUCKET_URL", "s3://data-warehouse")
+BUCKET_PATH = os.getenv("BUCKET_PATH", "data-warehouse")
+
+USE_LOCAL_SETUP = TEST or (DEBUG and len(os.getenv("OBJECT_STORAGE_ENDPOINT", "http://objectstorage:19000")) > 0)
+
+PYARROW_DEBUG_LOGGING = get_from_env("PYARROW_DEBUG_LOGGING", False, type_cast=str_to_bool)
+
+GOOGLE_ADS_SERVICE_ACCOUNT_CLIENT_EMAIL: str | None = os.getenv("GOOGLE_ADS_SERVICE_ACCOUNT_CLIENT_EMAIL")
+GOOGLE_ADS_SERVICE_ACCOUNT_PRIVATE_KEY: str | None = os.getenv("GOOGLE_ADS_SERVICE_ACCOUNT_PRIVATE_KEY")
+GOOGLE_ADS_SERVICE_ACCOUNT_PRIVATE_KEY_ID: str | None = os.getenv("GOOGLE_ADS_SERVICE_ACCOUNT_PRIVATE_KEY_ID")
+GOOGLE_ADS_SERVICE_ACCOUNT_TOKEN_URI: str | None = os.getenv("GOOGLE_ADS_SERVICE_ACCOUNT_TOKEN_URI")
+
+GOOGLE_SHEETS_SERVICE_ACCOUNT_CLIENT_EMAIL: str | None = os.getenv("GOOGLE_SHEETS_SERVICE_ACCOUNT_CLIENT_EMAIL")
+GOOGLE_SHEETS_SERVICE_ACCOUNT_PRIVATE_KEY: str | None = os.getenv("GOOGLE_SHEETS_SERVICE_ACCOUNT_PRIVATE_KEY")
+GOOGLE_SHEETS_SERVICE_ACCOUNT_PRIVATE_KEY_ID: str | None = os.getenv("GOOGLE_SHEETS_SERVICE_ACCOUNT_PRIVATE_KEY_ID")
+GOOGLE_SHEETS_SERVICE_ACCOUNT_TOKEN_URI: str | None = os.getenv("GOOGLE_SHEETS_SERVICE_ACCOUNT_TOKEN_URI")
+
+DATA_WAREHOUSE_REDIS_HOST: str | None = os.getenv(
+    "DATA_WAREHOUSE_REDIS_HOST", os.getenv("POSTHOG_REDIS_HOST", "localhost")
+)
+DATA_WAREHOUSE_REDIS_PORT: str | None = os.getenv("DATA_WAREHOUSE_REDIS_PORT", os.getenv("POSTHOG_REDIS_PORT", "6379"))
+
+CLICKHOUSE_HOGQL_RDSPROXY_READ_HOST: str | None = os.getenv("CLICKHOUSE_HOGQL_RDSPROXY_READ_HOST")
+CLICKHOUSE_HOGQL_RDSPROXY_READ_PORT: str | None = os.getenv("CLICKHOUSE_HOGQL_RDSPROXY_READ_PORT")
+CLICKHOUSE_HOGQL_RDSPROXY_READ_DATABASE: str | None = os.getenv("CLICKHOUSE_HOGQL_RDSPROXY_READ_DATABASE")
+CLICKHOUSE_HOGQL_RDSPROXY_READ_USER: str | None = os.getenv("CLICKHOUSE_HOGQL_RDSPROXY_READ_USER")
+CLICKHOUSE_HOGQL_RDSPROXY_READ_PASSWORD: str | None = os.getenv("CLICKHOUSE_HOGQL_RDSPROXY_READ_PASSWORD")
+
+# Warehouse-pipeline and cyclotron Kafka config live in `posthog/settings/kafka.py`
+# (profiles `warehouse_sources` and `cyclotron`) — read from `settings.KAFKA_PROFILES[...]`
+# or via the back-compat top-level names that settings/kafka.py exposes.

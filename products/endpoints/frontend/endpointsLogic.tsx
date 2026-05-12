@@ -1,0 +1,90 @@
+import { actions, afterMount, kea, key, path, props, reducers, selectors } from 'kea'
+import { loaders } from 'kea-loaders'
+
+import api from 'lib/api'
+import { tabAwareUrlToAction } from 'lib/logic/scenes/tabAwareUrlToAction'
+import { createFuse } from 'lib/utils/fuseSearch'
+import { urls } from 'scenes/urls'
+
+import { EndpointType } from '~/types'
+
+import type { endpointsLogicType } from './endpointsLogicType'
+
+export type EndpointsTab = 'endpoints' | 'usage'
+
+export interface EndpointsFilters {
+    search: string
+}
+
+export const DEFAULT_FILTERS: EndpointsFilters = {
+    search: '',
+}
+
+export interface EndpointsLogicProps {
+    tabId: string
+}
+
+export const endpointsLogic = kea<endpointsLogicType>([
+    path(['products', 'endpoints', 'frontend', 'endpointsLogic']),
+    props({} as EndpointsLogicProps),
+    key((props) => props.tabId),
+    actions({
+        setFilters: (filters: Partial<EndpointsFilters>) => ({ filters }),
+        setActiveTab: (activeTab: EndpointsTab) => ({ activeTab }),
+    }),
+    loaders(() => ({
+        allEndpoints: [
+            [] as EndpointType[],
+            {
+                loadEndpoints: async () => {
+                    const response = await api.endpoint.list()
+                    return response.results || []
+                },
+            },
+        ],
+    })),
+    reducers({
+        filters: [
+            DEFAULT_FILTERS as EndpointsFilters,
+            {
+                setFilters: (state, { filters }) => ({ ...state, ...filters }),
+            },
+        ],
+        activeTab: [
+            'endpoints' as EndpointsTab,
+            {
+                setActiveTab: (_, { activeTab }) => activeTab,
+            },
+        ],
+    }),
+    selectors({
+        endpoints: [
+            (s) => [s.allEndpoints, s.filters],
+            (allEndpoints, filters) => {
+                if (!filters.search) {
+                    return allEndpoints
+                }
+
+                const fuse = createFuse<EndpointType>(allEndpoints, {
+                    keys: ['name', 'description', 'query.query'],
+                    threshold: 0.3,
+                })
+                return fuse.search(filters.search).map((result) => result.item)
+            },
+        ],
+    }),
+    afterMount(({ actions }) => {
+        actions.loadEndpoints()
+    }),
+
+    tabAwareUrlToAction(({ actions }) => ({
+        [urls.endpoints()]: (_, searchParams) => {
+            if (searchParams.tab === 'usage') {
+                actions.setActiveTab('usage')
+            } else {
+                actions.setActiveTab('endpoints')
+                actions.loadEndpoints()
+            }
+        },
+    })),
+])

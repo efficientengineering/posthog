@@ -1,0 +1,421 @@
+use std::time::Duration;
+use thiserror::Error;
+
+#[derive(Error, Debug, Clone)]
+#[error("User Error: {msg}")]
+pub struct UserError {
+    pub msg: String,
+}
+
+impl UserError {
+    pub fn new(msg: impl Into<String>) -> Self {
+        Self { msg: msg.into() }
+    }
+}
+
+pub trait ToUserError<T> {
+    fn user_error(self, msg: impl Into<String>) -> anyhow::Result<T>;
+}
+
+// Use this to inject a user facing error message into the error chain
+// Our main thread can extract this from an error chain and display it to the user
+impl<T, E: std::error::Error + Send + Sync + 'static> ToUserError<T> for Result<T, E> {
+    fn user_error(self, msg: impl Into<String>) -> anyhow::Result<T> {
+        self.map_err(|e| anyhow::Error::from(e).context(UserError::new(msg)))
+    }
+}
+
+const DEFAULT_USER_ERROR_MESSAGE: &str = "An unknown error occurred";
+
+pub fn get_user_message(error: &anyhow::Error) -> String {
+    // Get the shallowest UserError in the chain
+    // To provide the user with all the error context they need, we concatenate the user errors together at call site
+    match error.downcast_ref::<UserError>() {
+        Some(user_error) => user_error.msg.clone(),
+        None => DEFAULT_USER_ERROR_MESSAGE.to_string(),
+    }
+}
+
+#[derive(Error, Debug)]
+#[error("Rate limited")]
+pub struct RateLimitedError {
+    pub retry_after: Option<Duration>,
+    #[source]
+    pub source: reqwest::Error,
+}
+
+/// Extracts a Retry-After duration if a RateLimitedError is present in the error chain
+pub fn extract_retry_after_from_error(error: &anyhow::Error) -> Option<Duration> {
+    if let Some(rl) = error.downcast_ref::<RateLimitedError>() {
+        return rl.retry_after;
+    }
+
+    let mut source = error.source();
+    while let Some(err) = source {
+        if let Some(rl) = err.downcast_ref::<RateLimitedError>() {
+            return rl.retry_after;
+        }
+        source = err.source();
+    }
+    None
+}
+
+/// Returns true if the error chain contains a reqwest::Error with HTTP 429.
+pub fn is_rate_limited_error(error: &anyhow::Error) -> bool {
+    // Our custom rate limit error also counts
+    if error.downcast_ref::<RateLimitedError>().is_some() {
+        return true;
+    }
+
+    if let Some(reqwest_err) = error.downcast_ref::<reqwest::Error>() {
+        if reqwest_err.status().is_some_and(|s| s.as_u16() == 429) {
+            return true;
+        }
+    }
+
+    let mut source = error.source();
+    while let Some(err) = source {
+        if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
+            if reqwest_err.status().is_some_and(|s| s.as_u16() == 429) {
+                return true;
+            }
+        }
+        source = err.source();
+    }
+    false
+}
+
+/// Returns true if the error chain contains a reqwest timeout error.
+/// Timeouts are transient and should be retried with backoff.
+pub fn is_timeout_error(error: &anyhow::Error) -> bool {
+    if let Some(reqwest_err) = error.downcast_ref::<reqwest::Error>() {
+        if reqwest_err.is_timeout() {
+            return true;
+        }
+    }
+
+    let mut source = error.source();
+    while let Some(err) = source {
+        if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
+            if reqwest_err.is_timeout() {
+                return true;
+            }
+        }
+        source = err.source();
+    }
+    false
+}
+
+/// Returns true if the error chain contains a transport-level reqwest error
+/// (connection refused/closed/reset, DNS, TLS, premature body close). Transient,
+/// retry with backoff. Excludes timeouts (see is_timeout_error), HTTP status errors,
+/// and builder errors (malformed URL / illegal header).
+pub fn is_transient_network_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|err| {
+        err.downcast_ref::<reqwest::Error>()
+            .is_some_and(|re| !re.is_timeout() && !re.is_builder() && re.status().is_none())
+    })
+}
+
+/// Returns true if the error chain contains a reqwest::Error with HTTP 502/503/504.
+pub fn is_transient_server_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|err| {
+        err.downcast_ref::<reqwest::Error>()
+            .is_some_and(|re| matches!(re.status().map(|s| s.as_u16()), Some(502..=504)))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+    use httpmock::MockServer;
+    use reqwest::Client;
+
+    #[test]
+    fn test_user_error_as_root() {
+        let user_error = UserError::new("Root user error message");
+        let error = anyhow::Error::from(user_error);
+
+        let result = get_user_message(&error);
+        assert_eq!(result, "Root user error message");
+    }
+
+    #[test]
+    fn test_user_error_in_middle_of_chain() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "File not found");
+        let user_error = UserError::new("User-friendly file error");
+
+        let error = anyhow::Error::from(io_error)
+            .context(user_error)
+            .context("High level operation failed");
+
+        let result = get_user_message(&error);
+        assert_eq!(result, "User-friendly file error");
+    }
+
+    #[test]
+    fn test_user_error_at_end_of_chain() {
+        let user_error = UserError::new("Deep user error");
+        let error = anyhow::Error::from(user_error)
+            .context("Middle layer error")
+            .context("Top level error");
+
+        let result = get_user_message(&error);
+        assert_eq!(result, "Deep user error");
+    }
+
+    #[test]
+    fn test_multiple_user_errors_returns_shallowest() {
+        let deep_user_error = UserError::new("Deep user error");
+        let shallowest_user_error = UserError::new("Shallowest user error");
+
+        let error = anyhow::Error::from(deep_user_error)
+            .context("Some system error")
+            .context(shallowest_user_error)
+            .context("Top level error");
+
+        let result = get_user_message(&error);
+        assert_eq!(result, "Shallowest user error");
+    }
+
+    #[test]
+    fn test_concatenated_user_error() {
+        // Test the pattern we use: concatenate inner message when creating outer error
+        let inner_error = anyhow::Error::from(UserError::new("specific parse error"));
+        let inner_msg = get_user_message(&inner_error);
+
+        let outer_error = inner_error.context(UserError::new(format!(
+            "File 'test.json' failed: {inner_msg}"
+        )));
+
+        let result = get_user_message(&outer_error);
+        assert_eq!(result, "File 'test.json' failed: specific parse error");
+    }
+
+    #[test]
+    fn test_no_user_error_in_chain() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Access denied");
+        let error = anyhow::Error::from(io_error)
+            .context("Failed to read config")
+            .context("Application startup failed");
+
+        let result = get_user_message(&error);
+        assert_eq!(result, DEFAULT_USER_ERROR_MESSAGE);
+    }
+
+    #[test]
+    fn test_single_non_user_error() {
+        let simple_error = anyhow!("Simple error message");
+
+        let result = get_user_message(&simple_error);
+        assert_eq!(result, DEFAULT_USER_ERROR_MESSAGE);
+    }
+
+    #[test]
+    fn test_user_error_trait_integration() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "File not found");
+        let result: anyhow::Result<()> =
+            Err(io_error).user_error("Could not find configuration file");
+
+        let error = result.unwrap_err();
+        let user_message = get_user_message(&error);
+        assert_eq!(user_message, "Could not find configuration file");
+    }
+
+    #[tokio::test]
+    async fn test_is_rate_limited_error_true_for_429() {
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/rl");
+            then.status(429);
+        });
+
+        let client = Client::new();
+        let resp = client.get(server.url("/rl")).send().await.unwrap();
+        let http_err = resp.error_for_status().unwrap_err();
+        let err = anyhow::Error::from(http_err);
+        assert!(is_rate_limited_error(&err));
+    }
+
+    #[tokio::test]
+    async fn test_is_rate_limited_error_false_for_non_429() {
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/err");
+            then.status(500);
+        });
+
+        let client = Client::new();
+        let resp = client.get(server.url("/err")).send().await.unwrap();
+        let http_err = resp.error_for_status().unwrap_err();
+        let err = anyhow::Error::from(http_err);
+        assert!(!is_rate_limited_error(&err));
+    }
+
+    #[tokio::test]
+    async fn test_is_timeout_error_true_for_timeout() {
+        // Use a server that accepts the connection but never responds,
+        // combined with a very short client timeout
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_millis(50))
+            .build()
+            .unwrap();
+
+        let err = client
+            .get(format!("http://{addr}/slow"))
+            .send()
+            .await
+            .unwrap_err();
+        let err = anyhow::Error::from(err);
+        assert!(is_timeout_error(&err));
+        assert!(!is_rate_limited_error(&err));
+    }
+
+    #[tokio::test]
+    async fn test_is_timeout_error_false_for_non_timeout() {
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/ok");
+            then.status(500);
+        });
+
+        let client = Client::new();
+        let resp = client.get(server.url("/ok")).send().await.unwrap();
+        let http_err = resp.error_for_status().unwrap_err();
+        let err = anyhow::Error::from(http_err);
+        assert!(!is_timeout_error(&err));
+    }
+
+    #[tokio::test]
+    async fn test_is_transient_network_error_true_for_connection_refused() {
+        // Bind to get a free port, then drop so nothing is listening.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let client = Client::new();
+        let err = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .unwrap_err();
+        let err = anyhow::Error::from(err);
+        assert!(is_transient_network_error(&err));
+        assert!(!is_timeout_error(&err));
+        assert!(!is_rate_limited_error(&err));
+    }
+
+    #[tokio::test]
+    async fn test_is_transient_network_error_false_for_http_status() {
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/err");
+            then.status(500);
+        });
+
+        let client = Client::new();
+        let resp = client.get(server.url("/err")).send().await.unwrap();
+        let http_err = resp.error_for_status().unwrap_err();
+        let err = anyhow::Error::from(http_err);
+        assert!(!is_transient_network_error(&err));
+    }
+
+    #[tokio::test]
+    async fn test_is_transient_network_error_true_for_connection_closed_mid_request() {
+        // Server accepts the TCP connection then immediately drops it — reproduces
+        // the "connection closed before message completed" reqwest variant we saw in prod.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                drop(stream);
+            }
+        });
+
+        let client = Client::new();
+        let err = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .unwrap_err();
+        let err = anyhow::Error::from(err);
+        assert!(is_transient_network_error(&err));
+        assert!(!is_timeout_error(&err));
+    }
+
+    #[tokio::test]
+    async fn test_is_transient_network_error_false_for_builder_error() {
+        // Null byte in header value — rejected at request construction, not transient.
+        let client = Client::new();
+        let err = client
+            .get("http://127.0.0.1:1/")
+            .header("X-Test", "bad\0value")
+            .send()
+            .await
+            .unwrap_err();
+        let err = anyhow::Error::from(err);
+        assert!(!is_transient_network_error(&err));
+    }
+
+    #[tokio::test]
+    async fn test_is_transient_server_error_true_for_502() {
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/e");
+            then.status(502);
+        });
+
+        let client = Client::new();
+        let resp = client.get(server.url("/e")).send().await.unwrap();
+        let http_err = resp.error_for_status().unwrap_err();
+        let err = anyhow::Error::from(http_err);
+        assert!(is_transient_server_error(&err));
+        assert!(!is_rate_limited_error(&err));
+        assert!(!is_transient_network_error(&err));
+    }
+
+    #[tokio::test]
+    async fn test_is_transient_server_error_true_for_503_and_504() {
+        for status in [503, 504] {
+            let server = MockServer::start();
+            let _mock = server.mock(|when, then| {
+                when.method(httpmock::Method::GET).path("/e");
+                then.status(status);
+            });
+
+            let client = Client::new();
+            let resp = client.get(server.url("/e")).send().await.unwrap();
+            let http_err = resp.error_for_status().unwrap_err();
+            let err = anyhow::Error::from(http_err);
+            assert!(
+                is_transient_server_error(&err),
+                "expected true for {status}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_is_transient_server_error_false_for_500_and_4xx() {
+        // 500 is ambiguous (could be a real bug) and 4xx are client errors — neither auto-retries.
+        for status in [500, 400, 404] {
+            let server = MockServer::start();
+            let _mock = server.mock(|when, then| {
+                when.method(httpmock::Method::GET).path("/e");
+                then.status(status);
+            });
+
+            let client = Client::new();
+            let resp = client.get(server.url("/e")).send().await.unwrap();
+            let http_err = resp.error_for_status().unwrap_err();
+            let err = anyhow::Error::from(http_err);
+            assert!(
+                !is_transient_server_error(&err),
+                "expected false for {status}"
+            );
+        }
+    }
+}

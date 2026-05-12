@@ -1,0 +1,1113 @@
+use std::sync::Arc;
+
+use anyhow::{Context, Error};
+use uuid::Uuid;
+
+use crate::metrics as metric_emit;
+use common_types::InternallyCapturedEvent;
+use lifecycle::Handle;
+use model::{JobModel, JobState, PartState};
+use tokio::sync::Mutex;
+use tracing::{debug, error, info, warn};
+
+use crate::{
+    context::AppContext,
+    emit::Emitter,
+    error::{
+        extract_retry_after_from_error, get_user_message, is_rate_limited_error, is_timeout_error,
+        is_transient_network_error, is_transient_server_error, UserError,
+    },
+    job::{backoff::format_backoff_messages, config::SinkConfig},
+    parse::{format::ParserFn, Parsed},
+    source::DataSource,
+};
+
+pub mod backoff;
+pub mod config;
+pub mod model;
+
+#[derive(Debug, PartialEq)]
+enum ErrorHandlingDecision {
+    Backoff {
+        delay: std::time::Duration,
+        status_msg: String,
+        display_msg: String,
+    },
+    Pause {
+        error_msg: String,
+        display_msg: String,
+    },
+}
+
+fn decide_on_error(
+    err: &anyhow::Error,
+    current_date_range: Option<&str>,
+    policy: crate::job::backoff::BackoffPolicy,
+    current_attempt: u32,
+    user_message: &str,
+) -> ErrorHandlingDecision {
+    if is_rate_limited_error(err) {
+        let mut delay = policy.next_delay(current_attempt);
+        if let Some(ra) = extract_retry_after_from_error(err) {
+            delay = std::cmp::min(ra, policy.max_delay);
+        }
+        let (status_msg, display_msg) =
+            format_backoff_messages(current_date_range, delay, "Rate limited (429)");
+        ErrorHandlingDecision::Backoff {
+            delay,
+            status_msg,
+            display_msg,
+        }
+    } else if is_timeout_error(err) {
+        let delay = policy.next_delay(current_attempt);
+        let (status_msg, display_msg) =
+            format_backoff_messages(current_date_range, delay, "Request timed out");
+        ErrorHandlingDecision::Backoff {
+            delay,
+            status_msg,
+            display_msg,
+        }
+    } else if is_transient_network_error(err) {
+        let delay = policy.next_delay(current_attempt);
+        let (status_msg, display_msg) =
+            format_backoff_messages(current_date_range, delay, "Transient network error");
+        ErrorHandlingDecision::Backoff {
+            delay,
+            status_msg,
+            display_msg,
+        }
+    } else if is_transient_server_error(err) {
+        let delay = policy.next_delay(current_attempt);
+        let (status_msg, display_msg) =
+            format_backoff_messages(current_date_range, delay, "Upstream server error (5xx)");
+        ErrorHandlingDecision::Backoff {
+            delay,
+            status_msg,
+            display_msg,
+        }
+    } else {
+        // Use the full error chain for developer-facing message
+        let error_msg = match current_date_range {
+            Some(dr) => format!("{err:#} (Date range: {dr})"),
+            None => format!("{err:#}"),
+        };
+        let display_msg = match current_date_range {
+            Some(dr) => format!("{user_message} (Date range: {dr})"),
+            None => user_message.to_string(),
+        };
+        ErrorHandlingDecision::Pause {
+            error_msg,
+            display_msg,
+        }
+    }
+}
+
+fn should_pause_due_to_max_attempts(next_attempt: u32, max_attempts: u32) -> bool {
+    max_attempts > 0 && next_attempt >= max_attempts
+}
+
+async fn reset_backoff_after_success(
+    context: Arc<AppContext>,
+    model: &mut JobModel,
+) -> Result<(), Error> {
+    model.reset_backoff_in_db(&context.db).await
+}
+
+pub struct Job {
+    pub context: Arc<AppContext>,
+    handle: Handle,
+
+    // Once created the job id doesn't change, store it on the Job struct for easy access, to avoid contention/locking on the model
+    pub job_id: Uuid,
+
+    // How many bytes to fetch from the source per iteration. Varies by sink
+    // type: the capture sink uses a smaller value to stay within the capture
+    // service's HTTP body size limit.
+    pub chunk_size: usize,
+
+    // The job maintains a copy of the job state, outside of the model,
+    // because process in a pipelined fashion, and to do that we need to
+    // seperate "in-memory job state" from "database job state"
+    pub state: Mutex<JobState>,
+    // We also maintain a copy of the model. This and the above are wrapped in a mutex
+    // because we simultaneously modify both, modifying our in-memory state when we
+    // fetch and parse data, and then updating the model state when we commit data
+    pub model: Mutex<JobModel>,
+
+    pub source: Box<dyn DataSource>,
+    pub transform: Arc<ParserFn>,
+
+    // We keep a mutex here so we can mutably borrow this and the job state at the same time
+    pub sink: Mutex<Box<dyn Emitter>>,
+
+    // We want to fetch data and send it at the same time, and this acts as a temporary store
+    // for the data we've fetched, but not yet sent
+    checkpoint: Mutex<Option<Checkpoint>>,
+}
+
+struct Checkpoint {
+    key: String,
+    data: Parsed<Vec<InternallyCapturedEvent>>,
+}
+
+impl Job {
+    pub async fn new(
+        mut model: JobModel,
+        context: Arc<AppContext>,
+        handle: Handle,
+    ) -> Result<Self, Error> {
+        let is_restarting = model.state.is_some();
+
+        let source = model
+            .import_config
+            .source
+            .construct(&model.secrets, context.clone(), is_restarting)
+            .await
+            .with_context(|| "Failed to construct data source for job".to_string())?;
+
+        // Some sources need to prepare for the job before we can start processing it
+        source.prepare_for_job().await?;
+
+        let transform = Box::new(
+            model
+                .import_config
+                .data_format
+                .get_parser(&model, context.clone())
+                .await?,
+        );
+
+        let sink = model
+            .import_config
+            .sink
+            .construct(context.clone(), &model)
+            .await
+            .with_context(|| format!("Failed to construct sink for job {}", model.id))?;
+
+        let mut state = model
+            .state
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| JobState { parts: vec![] });
+
+        if state.parts.is_empty() {
+            info!(job_id = %model.id, "Found job with no parts, initializing parts list");
+            // If we have no parts, we assume this is the first time picking up the job,
+            // and populate the parts list
+            let mut parts = Vec::new();
+            let keys = source
+                .keys()
+                .await
+                .with_context(|| "Failed to get source keys".to_string())?;
+            for key in keys {
+                let size = source
+                    .size(&key)
+                    .await
+                    .with_context(|| format!("Failed to get size for part {key}"))?;
+                debug!("Got size for part {key}: {size:?}");
+                parts.push(PartState {
+                    key,
+                    current_offset: 0,
+                    total_size: size,
+                });
+            }
+            state.parts = parts;
+            model.state = Some(state.clone());
+            info!(job_id = %model.id, "Initialized parts list: {:?}", state.parts);
+        }
+
+        let job_id = model.id;
+        let chunk_size = match &model.import_config.sink {
+            SinkConfig::Capture(_) => context.config.capture_chunk_size,
+            _ => context.config.chunk_size,
+        };
+
+        Ok(Self {
+            context,
+            handle,
+            job_id,
+            chunk_size,
+            model: Mutex::new(model),
+            state: Mutex::new(state),
+            source,
+            transform: Arc::new(transform),
+            sink: Mutex::new(sink),
+            checkpoint: Mutex::new(None),
+        })
+    }
+
+    pub async fn process(self) -> Result<Option<Self>, Error> {
+        let next_chunk_fut = self.get_next_chunk();
+        let next_commit_fut = self.do_commit();
+
+        let (next_chunk, next_commit) = tokio::join!(next_chunk_fut, next_commit_fut);
+
+        if let Err(e) = next_commit {
+            // If we fail to commit, we just log and bail out - the job will be paused if it needs to be,
+            // but this pod should restart, in case it's sink is in some bad state
+            error!("Failed to commit chunk: {:?}", e);
+            return Err(e);
+        }
+
+        let next = match next_chunk {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => {
+                // We're done fetching and parsing, so we can complete the job
+                if let Err(e) = self.source.cleanup_after_job().await {
+                    warn!("Failed to cleanup after job: {:?}", e);
+                }
+                self.successfully_complete().await?;
+                return Ok(None);
+            }
+            Err(e) => {
+                if let Err(e) = self.source.cleanup_after_job().await {
+                    warn!("Failed to cleanup after job: {:?}", e);
+                }
+                let user_facing_error_message = get_user_message(&e);
+                let current_date_range = {
+                    let state = self.state.lock().await;
+                    state
+                        .parts
+                        .iter()
+                        .find(|p| !p.is_done())
+                        .and_then(|p| self.source.get_date_range_for_key(&p.key))
+                };
+
+                let policy = self.context.config.backoff_policy();
+                let current_attempt = {
+                    let model = self.model.lock().await;
+                    model.backoff_attempt.max(0) as u32
+                };
+                let next_attempt = current_attempt.saturating_add(1);
+                match decide_on_error(
+                    &e,
+                    current_date_range.as_deref(),
+                    policy,
+                    current_attempt,
+                    &user_facing_error_message,
+                ) {
+                    ErrorHandlingDecision::Backoff {
+                        delay,
+                        status_msg,
+                        display_msg,
+                    } => {
+                        if should_pause_due_to_max_attempts(
+                            next_attempt,
+                            self.context.config.backoff_max_attempts,
+                        ) {
+                            let mut model = self.model.lock().await;
+                            let msg = match current_date_range.as_deref() {
+                                Some(dr) => format!(
+                                    "Max backoff attempts reached for date range {dr} (attempt {next_attempt}). Pausing."
+                                ),
+                                None => format!(
+                                    "Max backoff attempts reached (attempt {next_attempt}). Pausing."
+                                ),
+                            };
+                            model
+                                .pause(
+                                    self.context.clone(),
+                                    msg,
+                                    Some(
+                                        "Transient error persisted. Job paused after maximum retries."
+                                            .to_string(),
+                                    ),
+                                )
+                                .await?;
+                            return Ok(None);
+                        }
+
+                        error!(
+                            job_id = %self.model.lock().await.id,
+                            attempt = next_attempt,
+                            delay_secs = delay.as_secs(),
+                            "transient error, scheduling retry: {:#}",
+                            e
+                        );
+                        metric_emit::backoff_event(delay.as_secs_f64());
+
+                        let mut model = self.model.lock().await;
+                        model
+                            .schedule_backoff(
+                                &self.context.db,
+                                delay,
+                                status_msg,
+                                Some(display_msg),
+                                next_attempt as i32,
+                            )
+                            .await?;
+                        return Ok(None);
+                    }
+                    ErrorHandlingDecision::Pause {
+                        error_msg,
+                        display_msg,
+                    } => {
+                        let mut model = self.model.lock().await;
+                        error!(
+                            job_id = %model.id,
+                            user_msg = %error_msg,
+                            "Pausing job due to error: {:#}",
+                            e
+                        );
+                        model
+                            .pause(self.context.clone(), error_msg, Some(display_msg))
+                            .await?;
+                        return Ok(None);
+                    }
+                }
+            }
+        };
+
+        let mut checkpoint = self.checkpoint.lock().await;
+        *checkpoint = Some(Checkpoint {
+            key: next.0,
+            data: next.1,
+        });
+
+        drop(checkpoint);
+
+        // This wasn't the last part/chunk, so we return the job to let it be processed again
+        Ok(Some(self))
+    }
+
+    async fn get_next_chunk(
+        &self,
+    ) -> Result<Option<(String, Parsed<Vec<InternallyCapturedEvent>>)>, Error> {
+        let mut state = self.state.lock().await;
+
+        let Some(next_part) = state.parts.iter_mut().find(|p| !p.is_done()) else {
+            info!(job_id = %self.job_id, "Found no next part, returning");
+            return Ok(None); // We're done fetching
+        };
+
+        let key = next_part.key.clone();
+        self.source.prepare_key(&key).await?;
+
+        if next_part.total_size.is_none() {
+            if let Some(actual_size) = self.source.size(&key).await? {
+                next_part.total_size = Some(actual_size);
+                info!(job_id = %self.job_id, "Updated total size for key {}: {}", key, actual_size);
+
+                {
+                    let mut model = self.model.lock().await;
+                    if let Some(model_state) = &mut model.state {
+                        if let Some(model_part) =
+                            model_state.parts.iter_mut().find(|p| p.key == key)
+                        {
+                            model_part.total_size = Some(actual_size);
+                        }
+                    }
+                }
+
+                if actual_size == 0 {
+                    info!(
+                        job_id = %self.job_id,
+                        "No data available for this key: {} try to get the next chunk",
+                        key
+                    );
+                    next_part.current_offset = actual_size;
+                    return Ok(Some((
+                        key.clone(),
+                        Parsed {
+                            consumed: 0,
+                            data: vec![],
+                        },
+                    )));
+                }
+            }
+        }
+
+        info!(job_id = %self.job_id, "Fetching part chunk {:?}", next_part);
+
+        let next_chunk = self
+            .source
+            .get_chunk(
+                &next_part.key,
+                next_part.current_offset,
+                self.chunk_size as u64,
+            )
+            .await
+            .context(format!("Fetching part chunk {next_part:?}"))?;
+
+        let is_last_chunk = match next_part.total_size {
+            Some(total_size) => next_part.current_offset + next_chunk.len() as u64 > total_size,
+            None => false,
+        };
+
+        let chunk_bytes = next_chunk.len();
+
+        info!(job_id = %self.job_id, "Fetched part chunk {:?}", next_part);
+        let m_tf = self.transform.clone();
+        let key_for_error = key.clone();
+        // This is computationally expensive, so we run it in a blocking task
+        let parsed = tokio::task::spawn_blocking(move || (m_tf)(next_chunk))
+            .await?
+            .map_err(|e| {
+                let inner_msg = get_user_message(&e);
+                e.context(UserError::new(format!(
+                    "Parsing data in file '{key_for_error}' failed: {inner_msg}"
+                )))
+            })
+            .context(format!("Processing part chunk {next_part:?}"))?;
+
+        info!(
+            job_id = %self.job_id,
+            "Parsed part chunk {:?}, consumed {} bytes",
+            next_part, parsed.consumed
+        );
+
+        // If this is the last chunk and we didn't consume all of it, we have leftover unparseable data.
+        if parsed.consumed < chunk_bytes && is_last_chunk {
+            return Err(Error::msg(format!(
+                "Failed to parse data from part {} at offset {} - {} bytes left unconsumed",
+                next_part.key,
+                next_part.current_offset,
+                chunk_bytes - parsed.consumed
+            )));
+        }
+
+        // If we consumed no bytes and have no parsed data but there was data to consume, something went wrong.
+        // Note: don't error if we have no parsed data but have consumed bytes - invalid events may have been all filtered out
+        if parsed.consumed == 0 && parsed.data.is_empty() && chunk_bytes > 0 {
+            return Err(Error::msg(format!(
+                "Failed to parse any data from part {} at offset {}",
+                next_part.key, next_part.current_offset
+            )));
+        }
+
+        // Update the in-memory part state (the read will be committed to the DB once the write is done)
+        next_part.current_offset += parsed.consumed as u64;
+
+        let ret_key = key.clone();
+        {
+            let mut model = self.model.lock().await;
+            reset_backoff_after_success(self.context.clone(), &mut model).await?;
+        }
+
+        Ok(Some((ret_key, parsed)))
+    }
+
+    async fn do_commit(&self) -> Result<(), Error> {
+        self.shutdown_guard()?;
+        let mut checkpoint_lock = self.checkpoint.lock().await;
+
+        let Some(checkpoint) = checkpoint_lock.take() else {
+            info!(job_id = %self.job_id, "No checkpointed data to commit, returning");
+            return Ok(());
+        };
+
+        let (key, parsed) = (checkpoint.key, checkpoint.data);
+
+        info!(job_id = %self.job_id, "Committing part {} consumed {} bytes", key, parsed.consumed);
+        info!(job_id = %self.job_id, "Committing {} events", parsed.data.len());
+
+        let mut sink = self.sink.lock().await;
+        self.shutdown_guard()?;
+        let txn = sink.begin_write().await?;
+        info!(job_id = %self.job_id, "Writing {} events", parsed.data.len());
+        self.shutdown_guard()?;
+        txn.emit(&parsed.data).await?;
+        // Two-stage commit: pause the job in PG before committing to the sink, so that if we
+        // crash between the two, the job is paused and requires manual intervention rather than
+        // silently skipping a chunk. The operator can confirm whether the sink commit succeeded
+        // by looking at the last event written or the logs.
+        self.shutdown_guard()?;
+        info!(job_id = %self.job_id, "Beginning PG part commit");
+        self.begin_part_commit(&key, parsed.consumed).await?;
+        info!(job_id = %self.job_id, "Beginning emitter part commit");
+
+        let to_sleep = txn.commit_write().await?;
+        info!(job_id = %self.job_id, "Finishing PG part commit");
+        self.complete_commit().await?;
+        info!(job_id = %self.job_id, "Committed part {} consumed {} bytes", key, parsed.consumed);
+        info!(job_id = %self.job_id, "Sleeping for {:?}", to_sleep);
+        tokio::select! {
+            _ = tokio::time::sleep(to_sleep) => {},
+            _ = self.handle.shutdown_recv() => {},
+        }
+
+        Ok(())
+    }
+
+    async fn successfully_complete(self) -> Result<(), Error> {
+        let mut model = self.model.lock().await;
+        let result = model.complete(&self.context.db).await;
+        if result.is_ok() {
+            info!(job_id = %self.job_id, "Batch import job complete");
+        }
+        result
+    }
+
+    // Writes the new partstate to the DB, and sets the job status to paused, such that if there's an issue with the sink commit, the job
+    // will be paused, and manual intervention will be required to resume it
+    async fn begin_part_commit(&self, key: &str, consumed: usize) -> Result<(), Error> {
+        let mut model = self.model.lock().await;
+        let Some(model_state) = &mut model.state else {
+            return Err(Error::msg("No model state found"));
+        };
+
+        // Iterate through the parts list and update the relevant part
+        let Some(part) = model_state.parts.iter_mut().find(|p| p.key == key) else {
+            return Err(Error::msg(format!("No part found with key {key}")));
+        };
+
+        part.current_offset += consumed as u64;
+
+        let status_message = format!(
+            "Starting commit of part {} to offset {}, consumed {} additional bytes",
+            key, part.current_offset, consumed
+        );
+
+        model
+            .pause(
+                self.context.clone(),
+                status_message,
+                Some("Job paused while committing events".to_string()),
+            )
+            .await
+    }
+
+    // Unpauses the job
+    async fn complete_commit(&self) -> Result<(), Error> {
+        let mut model = self.model.lock().await;
+        model.unpause(self.context.clone()).await
+    }
+
+    fn shutdown_guard(&self) -> Result<(), Error> {
+        if self.handle.is_shutting_down() {
+            warn!("Shutdown signaled during job processing, bailing");
+            Err(Error::msg("Shutdown signaled during job processing"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use httpmock::Method;
+    use httpmock::MockServer;
+    use reqwest::Client;
+    use std::collections::HashMap;
+
+    struct MockDataSource {
+        keys: Vec<String>,
+        date_ranges: HashMap<String, String>,
+    }
+
+    impl MockDataSource {
+        fn new() -> Self {
+            let mut date_ranges = HashMap::new();
+            date_ranges.insert(
+                "2023-01-01T00:00:00+00:00_2023-01-01T01:00:00+00:00".to_string(),
+                "2023-01-01 00:00 UTC to 2023-01-01 01:00 UTC".to_string(),
+            );
+            date_ranges.insert(
+                "2023-01-01T01:00:00+00:00_2023-01-01T02:00:00+00:00".to_string(),
+                "2023-01-01 01:00 UTC to 2023-01-01 02:00 UTC".to_string(),
+            );
+
+            Self {
+                keys: vec![
+                    "2023-01-01T00:00:00+00:00_2023-01-01T01:00:00+00:00".to_string(),
+                    "2023-01-01T01:00:00+00:00_2023-01-01T02:00:00+00:00".to_string(),
+                ],
+                date_ranges,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl DataSource for MockDataSource {
+        async fn keys(&self) -> Result<Vec<String>, Error> {
+            Ok(self.keys.clone())
+        }
+
+        async fn size(&self, _key: &str) -> Result<Option<u64>, Error> {
+            Ok(Some(100))
+        }
+
+        async fn get_chunk(&self, _key: &str, _offset: u64, _size: u64) -> Result<Vec<u8>, Error> {
+            Err(Error::msg("Mock error for testing"))
+        }
+
+        fn get_date_range_for_key(&self, key: &str) -> Option<String> {
+            self.date_ranges.get(key).cloned()
+        }
+    }
+
+    struct MockDataSourceWithoutDateRange {
+        keys: Vec<String>,
+    }
+
+    impl MockDataSourceWithoutDateRange {
+        fn new() -> Self {
+            Self {
+                keys: vec!["some-key".to_string()],
+            }
+        }
+    }
+
+    #[async_trait]
+    impl DataSource for MockDataSourceWithoutDateRange {
+        async fn keys(&self) -> Result<Vec<String>, Error> {
+            Ok(self.keys.clone())
+        }
+
+        async fn size(&self, _key: &str) -> Result<Option<u64>, Error> {
+            Ok(Some(100))
+        }
+
+        async fn get_chunk(&self, _key: &str, _offset: u64, _size: u64) -> Result<Vec<u8>, Error> {
+            Err(Error::msg("Mock error for testing"))
+        }
+    }
+
+    #[test]
+    fn test_error_message_includes_date_range_when_available() {
+        let mock_source = MockDataSource::new();
+        let key = "2023-01-01T00:00:00+00:00_2023-01-01T01:00:00+00:00";
+
+        let date_range = mock_source.get_date_range_for_key(key);
+        assert_eq!(
+            date_range,
+            Some("2023-01-01 00:00 UTC to 2023-01-01 01:00 UTC".to_string())
+        );
+
+        let error_message = format!(
+            "Failed to fetch and parse chunk for date range {}: Mock error",
+            date_range.unwrap()
+        );
+        assert_eq!(
+            error_message,
+            "Failed to fetch and parse chunk for date range 2023-01-01 00:00 UTC to 2023-01-01 01:00 UTC: Mock error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decide_on_error_backoff_for_429() {
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/export");
+            then.status(429);
+        });
+
+        let resp = Client::new()
+            .get(server.url("/export"))
+            .send()
+            .await
+            .unwrap();
+        let http_err = resp.error_for_status().unwrap_err();
+        let err = anyhow::Error::from(http_err);
+
+        let decision = decide_on_error(
+            &err,
+            Some("2023-01-01 00:00 UTC to 2023-01-01 01:00 UTC"),
+            crate::job::backoff::BackoffPolicy::new(
+                std::time::Duration::from_secs(60),
+                2.0,
+                std::time::Duration::from_secs(3600),
+            ),
+            0,
+            "Rate limit exceeded",
+        );
+
+        match decision {
+            ErrorHandlingDecision::Backoff {
+                delay,
+                status_msg,
+                display_msg,
+            } => {
+                assert_eq!(delay.as_secs(), 60);
+                assert!(status_msg.contains("retry"));
+                assert!(display_msg.contains("Date range"));
+            }
+            _ => panic!("expected backoff"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_decide_on_error_pause_for_non_429() {
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/export");
+            then.status(500);
+        });
+
+        let resp = Client::new()
+            .get(server.url("/export"))
+            .send()
+            .await
+            .unwrap();
+        let http_err = resp.error_for_status().unwrap_err();
+        let err = anyhow::Error::from(http_err);
+
+        let decision = decide_on_error(
+            &err,
+            None,
+            crate::job::backoff::BackoffPolicy::new(
+                std::time::Duration::from_secs(60),
+                2.0,
+                std::time::Duration::from_secs(3600),
+            ),
+            2,
+            "Remote server error",
+        );
+
+        match decision {
+            ErrorHandlingDecision::Pause {
+                error_msg,
+                display_msg,
+            } => {
+                assert!(error_msg.contains("500 Internal Server Error"));
+                assert_eq!(display_msg, "Remote server error");
+            }
+            _ => panic!("expected pause"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_retry_after_overrides_backoff() {
+        let server = MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(Method::GET).path("/rl");
+            then.status(429).header("Retry-After", "2");
+        });
+
+        let resp = Client::new().get(server.url("/rl")).send().await.unwrap();
+        // Clone headers from the actual response before turning it into an error
+        let headers_clone = resp.headers().clone();
+        let http_err = resp.error_for_status().unwrap_err();
+
+        // Wrap into our RateLimitedError manually to include Retry-After from response
+        let retry_after =
+            crate::source::date_range_export::parse_retry_after_header(&headers_clone)
+                .expect("retry-after parsed");
+        let rl = crate::error::RateLimitedError {
+            retry_after: Some(retry_after),
+            source: http_err,
+        };
+        let err = anyhow::Error::from(rl);
+
+        let decision = super::decide_on_error(
+            &err,
+            None,
+            crate::job::backoff::BackoffPolicy::new(
+                std::time::Duration::from_secs(60),
+                2.0,
+                std::time::Duration::from_secs(3600),
+            ),
+            0,
+            "Rate limit exceeded",
+        );
+
+        match decision {
+            super::ErrorHandlingDecision::Backoff { delay, .. } => {
+                assert_eq!(delay.as_secs(), 2);
+            }
+            _ => panic!("expected backoff"),
+        }
+    }
+
+    #[test]
+    fn test_reset_backoff_after_success() {
+        let mut model = JobModel {
+            // Minimal dummy values; only fields we need in this function
+            id: uuid::Uuid::now_v7(),
+            team_id: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            lease_id: None,
+            leased_until: None,
+            status: super::model::JobStatus::Running,
+            status_message: None,
+            display_status_message: None,
+            state: Some(JobState { parts: vec![] }),
+            import_config: super::config::JobConfig {
+                // Construct a trivially valid config that won't be used by this test
+                source: super::config::SourceConfig::Folder(super::config::FolderSourceConfig {
+                    path: "/tmp".to_string(),
+                }),
+                data_format: crate::parse::format::FormatConfig::JsonLines {
+                    skip_blanks: true,
+                    content: crate::parse::content::ContentType::Captured,
+                },
+                sink: super::config::SinkConfig::NoOp,
+                import_events: true,
+                generate_identify_events: false,
+                generate_group_identify_events: false,
+            },
+            secrets: super::config::JobSecrets {
+                secrets: std::collections::HashMap::new(),
+            },
+            was_leased: false,
+            backoff_attempt: 5,
+            backoff_until: None,
+        };
+
+        // Only verifies local field change; DB write path covered elsewhere
+        model.backoff_attempt = 0;
+        assert_eq!(model.backoff_attempt, 0);
+    }
+
+    #[test]
+    fn test_error_message_without_date_range() {
+        let mock_source = MockDataSourceWithoutDateRange::new();
+        let key = "some-key";
+
+        let date_range = mock_source.get_date_range_for_key(key);
+        assert!(date_range.is_none());
+
+        let error_message = "Failed to fetch and parse chunk: Mock error";
+        assert_eq!(error_message, "Failed to fetch and parse chunk: Mock error");
+    }
+
+    #[test]
+    fn test_display_message_includes_date_range() {
+        let user_message = "Connection failed";
+        let date_range = "2023-01-01 00:00 UTC to 2023-01-01 01:00 UTC";
+
+        let display_message = format!("{user_message} (Date range: {date_range})");
+        assert_eq!(
+            display_message,
+            "Connection failed (Date range: 2023-01-01 00:00 UTC to 2023-01-01 01:00 UTC)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decide_on_error_backoff_for_timeout() {
+        // Create a TCP listener that accepts but never responds, triggering a client timeout
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_millis(50))
+            .build()
+            .unwrap();
+
+        let err = client
+            .get(format!("http://{addr}/export"))
+            .send()
+            .await
+            .unwrap_err();
+        let err = anyhow::Error::from(err);
+
+        let decision = decide_on_error(
+            &err,
+            Some("2026-01-01 10:00 UTC to 2026-01-01 11:00 UTC"),
+            crate::job::backoff::BackoffPolicy::new(
+                std::time::Duration::from_secs(60),
+                2.0,
+                std::time::Duration::from_secs(3600),
+            ),
+            0,
+            "Request timed out",
+        );
+
+        match decision {
+            ErrorHandlingDecision::Backoff {
+                delay,
+                status_msg,
+                display_msg,
+            } => {
+                assert_eq!(delay.as_secs(), 60);
+                assert!(
+                    status_msg.contains("Request timed out"),
+                    "status_msg should mention timeout: {status_msg}"
+                );
+                assert!(
+                    display_msg.contains("Date range"),
+                    "display_msg should include date range: {display_msg}"
+                );
+                assert!(
+                    display_msg.contains("Request timed out"),
+                    "display_msg should mention timeout: {display_msg}"
+                );
+            }
+            _ => panic!("expected backoff for timeout error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_decide_on_error_backoff_for_transient_network_error() {
+        // Bind then drop to close the port — connecting will be refused.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let client = Client::new();
+        let err = client
+            .get(format!("http://{addr}/export"))
+            .send()
+            .await
+            .unwrap_err();
+        let err = anyhow::Error::from(err);
+
+        let decision = decide_on_error(
+            &err,
+            Some("2026-01-01 10:00 UTC to 2026-01-01 11:00 UTC"),
+            crate::job::backoff::BackoffPolicy::new(
+                std::time::Duration::from_secs(60),
+                2.0,
+                std::time::Duration::from_secs(3600),
+            ),
+            0,
+            "Transient network error",
+        );
+
+        match decision {
+            ErrorHandlingDecision::Backoff {
+                delay,
+                status_msg,
+                display_msg,
+            } => {
+                assert_eq!(delay.as_secs(), 60);
+                assert!(
+                    status_msg.contains("Transient network error"),
+                    "status_msg should mention transient network error: {status_msg}"
+                );
+                assert!(
+                    display_msg.contains("Date range"),
+                    "display_msg should include date range: {display_msg}"
+                );
+                assert!(
+                    display_msg.contains("Transient network error"),
+                    "display_msg should mention transient network error: {display_msg}"
+                );
+            }
+            _ => panic!("expected backoff for transient network error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_decide_on_error_backoff_for_502() {
+        let server = httpmock::MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/e");
+            then.status(502);
+        });
+        let client = Client::new();
+        let resp = client.get(server.url("/e")).send().await.unwrap();
+        let http_err = resp.error_for_status().unwrap_err();
+        let err = anyhow::Error::from(http_err);
+
+        let decision = decide_on_error(
+            &err,
+            Some("2026-01-01 10:00 UTC to 2026-01-01 11:00 UTC"),
+            crate::job::backoff::BackoffPolicy::new(
+                std::time::Duration::from_secs(60),
+                2.0,
+                std::time::Duration::from_secs(3600),
+            ),
+            0,
+            "Upstream server error (5xx)",
+        );
+
+        match decision {
+            ErrorHandlingDecision::Backoff {
+                delay,
+                status_msg,
+                display_msg,
+            } => {
+                assert_eq!(delay.as_secs(), 60);
+                assert!(
+                    status_msg.contains("Upstream server error"),
+                    "status_msg should mention upstream server error: {status_msg}"
+                );
+                assert!(
+                    display_msg.contains("Date range"),
+                    "display_msg should include date range: {display_msg}"
+                );
+            }
+            _ => panic!("expected backoff for 502"),
+        }
+    }
+
+    #[test]
+    fn test_should_pause_due_to_max_attempts() {
+        assert!(!should_pause_due_to_max_attempts(0, 0)); // unlimited
+        assert!(!should_pause_due_to_max_attempts(2, 3));
+        assert!(should_pause_due_to_max_attempts(3, 3));
+        assert!(should_pause_due_to_max_attempts(4, 3));
+    }
+
+    #[test]
+    fn test_decide_on_error_separates_developer_and_user_messages() {
+        let root_error =
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid byte sequence");
+        let error = anyhow::Error::from(root_error)
+            .context("Failed to parse JSON")
+            .context("Processing chunk");
+
+        let decision = decide_on_error(
+            &error,
+            Some("2023-01-01 to 2023-01-02"),
+            crate::job::backoff::BackoffPolicy::new(
+                std::time::Duration::from_secs(60),
+                2.0,
+                std::time::Duration::from_secs(3600),
+            ),
+            0,
+            "User-friendly error message",
+        );
+
+        match decision {
+            ErrorHandlingDecision::Pause {
+                error_msg,
+                display_msg,
+            } => {
+                assert!(
+                    error_msg.contains("Processing chunk"),
+                    "Developer message should contain outer context: {error_msg}"
+                );
+                assert!(
+                    error_msg.contains("Failed to parse JSON"),
+                    "Developer message should contain inner context: {error_msg}"
+                );
+                assert!(
+                    error_msg.contains("invalid byte sequence"),
+                    "Developer message should contain root cause: {error_msg}"
+                );
+
+                assert_eq!(
+                    display_msg,
+                    "User-friendly error message (Date range: 2023-01-01 to 2023-01-02)"
+                );
+            }
+            _ => panic!("Expected Pause decision"),
+        }
+    }
+
+    mod shutdown_guard_tests {
+        use tokio_util::sync::CancellationToken;
+
+        fn make_handle(token: CancellationToken) -> lifecycle::Handle {
+            let mut manager = lifecycle::Manager::builder("test")
+                .with_trap_signals(false)
+                .with_prestop_check(false)
+                .with_shutdown_token(token)
+                .build();
+            manager.register("test-component", lifecycle::ComponentOptions::new())
+        }
+
+        /// shutdown_guard delegates to handle.is_shutting_down(); verify the
+        /// underlying predicate returns false before cancellation.
+        #[test]
+        fn handle_not_shutting_down_before_cancel() {
+            let token = CancellationToken::new();
+            let handle = make_handle(token);
+            assert!(!handle.is_shutting_down());
+        }
+
+        /// After the token is cancelled, is_shutting_down() returns true --
+        /// which is what shutdown_guard uses to bail out of commit phases.
+        #[test]
+        fn handle_shutting_down_after_cancel() {
+            let token = CancellationToken::new();
+            let handle = make_handle(token.clone());
+            token.cancel();
+            assert!(handle.is_shutting_down());
+        }
+    }
+}

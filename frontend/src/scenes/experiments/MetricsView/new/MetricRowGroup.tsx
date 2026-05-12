@@ -1,0 +1,1002 @@
+import './MetricRowGroup.scss'
+
+import { useActions } from 'kea'
+import React, { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+
+import { IconTrending } from '@posthog/icons'
+
+import { IconTrendingDown } from 'lib/lemon-ui/icons'
+import { LemonCollapse } from 'lib/lemon-ui/LemonCollapse'
+import { humanFriendlyLargeNumber } from 'lib/utils'
+import { VariantTag } from 'scenes/experiments/ExperimentView/components'
+import { BreakdownTag } from 'scenes/insights/filters/BreakdownFilter/BreakdownTag'
+import { formatBreakdownLabel } from 'scenes/insights/utils'
+
+import {
+    Breakdown,
+    ExperimentMetric,
+    ExperimentStatsBaseValidated,
+    NewExperimentQueryResponse,
+} from '~/queries/schema/schema-general'
+import { NodeKind } from '~/queries/schema/schema-general'
+import { Experiment, InsightType } from '~/types'
+
+import { experimentLogic } from '../../experimentLogic'
+import { isLaunched } from '../../experimentsLogic'
+import { useColumnWidthSync } from '../hooks/useColumnWidthSync'
+import { ChartEmptyState } from '../shared/ChartEmptyState'
+import { ChartLoadingState } from '../shared/ChartLoadingState'
+import { useChartColors } from '../shared/colors'
+import { MetricHeader } from '../shared/MetricHeader'
+import {
+    type ExperimentVariantResult,
+    formatChanceToWinForGoal,
+    formatDeltaPercent,
+    formatMetricValue,
+    formatPValue,
+    getDelta,
+    getMetricSubtitleValues,
+    getNiceTickValues,
+    isBayesianResult,
+    isDeltaPositive,
+    isSignificant,
+    isWinning,
+} from '../shared/utils'
+import { ChartCell } from './ChartCell'
+import {
+    CELL_HEIGHT,
+    CHART_CELL_VIEW_BOX_HEIGHT,
+    EMPTY_STATE_ROW_MIN_HEIGHT,
+    GRID_LINES_OPACITY,
+    SVG_EDGE_MARGIN,
+    VIEW_BOX_WIDTH,
+} from './constants'
+import { DetailsButton } from './DetailsButton'
+import { DetailsModal } from './DetailsModal'
+import { GridLines } from './GridLines'
+import { renderTooltipContent } from './MetricRowGroupTooltip'
+import { TimeseriesModal } from './TimeseriesModal'
+import { useAxisScale } from './useAxisScale'
+
+const FIXED_HEIGHT_STYLE: React.CSSProperties = {
+    height: `${CELL_HEIGHT}px`,
+    maxHeight: `${CELL_HEIGHT}px`,
+}
+
+const getScaledHeightStyle = (rowCount: number): React.CSSProperties => {
+    const scaledHeight = `${CELL_HEIGHT * rowCount}px`
+
+    return {
+        height: scaledHeight,
+        maxHeight: scaledHeight,
+    }
+}
+
+const getMinHeightStyle = (height: number): React.CSSProperties => ({ minHeight: `${height}px` })
+
+interface BreakdownErrorStateProps {
+    metric: ExperimentMetric
+    isAlternatingRow: boolean
+    onRemoveBreakdown: (index: number) => void
+}
+
+function BreakdownErrorState({ metric, isAlternatingRow, onRemoveBreakdown }: BreakdownErrorStateProps): JSX.Element {
+    return (
+        <tr data-breakdown-row className="hover:bg-bg-hover group [&:last-child>td]:border-b-0">
+            <td colSpan={7} className={`p-0 border-t border-b ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}>
+                <div className="p-1">
+                    <div className="flex items-center gap-2">
+                        {metric.breakdownFilter?.breakdowns?.map((breakdown, index) => (
+                            <BreakdownTag
+                                key={index}
+                                breakdown={breakdown.property}
+                                breakdownType={breakdown.type || 'event'}
+                                onClose={() => onRemoveBreakdown(index)}
+                                size="small"
+                            />
+                        ))}
+                    </div>
+                </div>
+            </td>
+        </tr>
+    )
+}
+
+interface CollapsibleBreakdownSectionProps {
+    breakdownResults: any[]
+    metric: ExperimentMetric
+    experiment: Experiment
+    axisRange: number
+    isAlternatingRow: boolean
+    isLastMetric: boolean
+    isLoading?: boolean
+    exposuresLoading?: boolean
+    colors: ReturnType<typeof useChartColors>
+    scale: ReturnType<typeof useAxisScale>
+    onRemoveBreakdown: (index: number) => void
+    onRetry: () => void
+    query?: Record<string, any>
+    handleTooltipMouseEnter: (e: React.MouseEvent, variantResult: ExperimentVariantResult) => void
+    handleTooltipMouseLeave: () => void
+    handleTooltipMouseMove: (e: React.MouseEvent, variantResult: ExperimentVariantResult) => void
+}
+
+function CollapsibleBreakdownSection({
+    breakdownResults,
+    metric,
+    experiment,
+    axisRange,
+    isAlternatingRow,
+    isLoading,
+    exposuresLoading,
+    colors,
+    scale,
+    onRemoveBreakdown,
+    onRetry,
+    query,
+    handleTooltipMouseEnter,
+    handleTooltipMouseLeave,
+    handleTooltipMouseMove,
+}: CollapsibleBreakdownSectionProps): JSX.Element {
+    const [isExpanded, setIsExpanded] = useState(false)
+    const mainTableRef = useRef<HTMLTableRowElement>(null)
+    const nestedTableRef = useRef<HTMLTableElement>(null)
+
+    const totalRows = 1 + (breakdownResults[0]?.variants?.length || 0)
+    const totalRowsHeightStyle = getScaledHeightStyle(totalRows)
+
+    // Sync nested breakdown table column widths with parent table (only when expanded)
+    useColumnWidthSync(
+        {
+            parentRowRef: mainTableRef,
+            nestedTableRef,
+        },
+        [breakdownResults, axisRange, isExpanded]
+    )
+
+    const ratioMetricLabel = (variant: ExperimentStatsBaseValidated, metric: ExperimentMetric): JSX.Element => {
+        return (
+            <div className="text-xs text-muted">
+                {(() => {
+                    const { numerator, denominator } = getMetricSubtitleValues(variant, metric)
+                    return (
+                        <>
+                            {humanFriendlyLargeNumber(numerator)} / {humanFriendlyLargeNumber(denominator)}
+                        </>
+                    )
+                })()}
+            </div>
+        )
+    }
+
+    return (
+        <tr ref={mainTableRef} data-breakdown-row className="hover:bg-bg-hover group [&:last-child>td]:border-b-0">
+            <td colSpan={7} className={`p-0 border-t border-b ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}>
+                <LemonCollapse
+                    multiple={false}
+                    embedded
+                    className={`breakdown-collapse breakdown-collapse--${isAlternatingRow ? 'alt-row' : 'normal-row'}`}
+                    panels={[
+                        {
+                            key: 'breakdowns',
+                            header: (
+                                <div className="flex items-center gap-2">
+                                    {metric.breakdownFilter?.breakdowns?.map((breakdown, index) => (
+                                        <BreakdownTag
+                                            key={index}
+                                            breakdown={breakdown.property}
+                                            breakdownType={breakdown.type || 'event'}
+                                            onClose={() => onRemoveBreakdown(index)}
+                                            size="small"
+                                        />
+                                    ))}
+                                </div>
+                            ),
+                            content: (
+                                <div className="p-0 -m-4">
+                                    <table ref={nestedTableRef} className="w-full">
+                                        <tbody>
+                                            {breakdownResults.map((breakdownResult) => {
+                                                const baselineResult = breakdownResult.baseline
+                                                const variantResults = breakdownResult.variants || []
+
+                                                if (variantResults.length === 0) {
+                                                    return (
+                                                        <tr
+                                                            key={breakdownResult.breakdown_value}
+                                                            className="hover:bg-bg-hover"
+                                                            style={FIXED_HEIGHT_STYLE}
+                                                        >
+                                                            <td
+                                                                className={`w-1/5 border-r p-3 ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                                                            >
+                                                                {formatBreakdownLabel(
+                                                                    breakdownResult.breakdown_value,
+                                                                    metric.breakdownFilter,
+                                                                    [],
+                                                                    undefined,
+                                                                    0,
+                                                                    undefined
+                                                                )}
+                                                            </td>
+                                                            <td
+                                                                colSpan={6}
+                                                                className={`p-3 text-center ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                                                                style={FIXED_HEIGHT_STYLE}
+                                                            >
+                                                                {isLoading || exposuresLoading ? (
+                                                                    <ChartLoadingState height={CELL_HEIGHT} />
+                                                                ) : (
+                                                                    <ChartEmptyState
+                                                                        height={CELL_HEIGHT}
+                                                                        experimentStarted={isLaunched(experiment)}
+                                                                        metric={metric}
+                                                                        query={query}
+                                                                        onRetry={onRetry}
+                                                                    />
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    )
+                                                }
+
+                                                return (
+                                                    <React.Fragment key={breakdownResult.breakdown_value}>
+                                                        {/* Baseline row */}
+                                                        <tr className="hover:bg-bg-hover" style={FIXED_HEIGHT_STYLE}>
+                                                            <td
+                                                                className={`w-1/5 border-r p-3 align-top border-b ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'} text-xs`}
+                                                                rowSpan={totalRows}
+                                                                style={totalRowsHeightStyle}
+                                                            >
+                                                                {formatBreakdownLabel(
+                                                                    breakdownResult.breakdown_value,
+                                                                    metric.breakdownFilter,
+                                                                    [],
+                                                                    undefined,
+                                                                    0,
+                                                                    undefined
+                                                                )}
+                                                            </td>
+
+                                                            <td
+                                                                className={`w-20 pt-1 pl-3 pr-3 pb-1 whitespace-nowrap overflow-hidden ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                                                                style={FIXED_HEIGHT_STYLE}
+                                                            >
+                                                                <VariantTag variantKey={baselineResult.key} />
+                                                            </td>
+
+                                                            <td
+                                                                className={`w-24 pt-1 pl-3 pr-3 pb-1 text-left whitespace-nowrap overflow-hidden ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                                                                style={FIXED_HEIGHT_STYLE}
+                                                            >
+                                                                <div className="metric-cell">
+                                                                    <div>
+                                                                        {formatMetricValue(baselineResult, metric)}
+                                                                    </div>
+                                                                    {ratioMetricLabel(baselineResult, metric)}
+                                                                </div>
+                                                            </td>
+
+                                                            <td
+                                                                className={`w-20 pt-1 pl-3 pr-3 pb-1 ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                                                                style={FIXED_HEIGHT_STYLE}
+                                                            >
+                                                                <div />
+                                                            </td>
+
+                                                            <td
+                                                                className={`w-20 pt-1 pl-3 pr-3 pb-1 text-center ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                                                                style={FIXED_HEIGHT_STYLE}
+                                                            >
+                                                                <div />
+                                                            </td>
+
+                                                            {/* Empty Details column for alignment */}
+                                                            <td
+                                                                className={`w-20 pt-3 align-top relative overflow-hidden border-b ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                                                                rowSpan={totalRows}
+                                                                style={totalRowsHeightStyle}
+                                                            />
+
+                                                            <td
+                                                                className={`p-0 align-top text-center relative overflow-hidden ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                                                                style={FIXED_HEIGHT_STYLE}
+                                                            >
+                                                                {axisRange && axisRange > 0 ? (
+                                                                    <div className="relative h-full">
+                                                                        <svg
+                                                                            viewBox={`0 0 ${VIEW_BOX_WIDTH} ${CHART_CELL_VIEW_BOX_HEIGHT}`}
+                                                                            preserveAspectRatio="none"
+                                                                            className="h-full w-full"
+                                                                        >
+                                                                            <GridLines
+                                                                                tickValues={getNiceTickValues(
+                                                                                    axisRange
+                                                                                )}
+                                                                                scale={scale}
+                                                                                height={CHART_CELL_VIEW_BOX_HEIGHT}
+                                                                                viewBoxWidth={VIEW_BOX_WIDTH}
+                                                                                zeroLineColor={colors.ZERO_LINE}
+                                                                                gridLineColor={colors.BOUNDARY_LINES}
+                                                                                zeroLineWidth={1.25}
+                                                                                gridLineWidth={0.75}
+                                                                                opacity={GRID_LINES_OPACITY}
+                                                                            />
+                                                                        </svg>
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="flex items-center justify-center h-full text-muted text-xs">
+                                                                        —
+                                                                    </div>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+
+                                                        {/* Variant rows */}
+                                                        {variantResults.map(
+                                                            (variant: ExperimentVariantResult, index: number) => {
+                                                                const isLastRow = index === variantResults.length - 1
+                                                                const significant = isSignificant(variant)
+                                                                const deltaPositive = isDeltaPositive(variant)
+                                                                const winning = isWinning(variant, metric.goal)
+                                                                const deltaText = formatDeltaPercent(variant)
+
+                                                                return (
+                                                                    <tr
+                                                                        key={`${metric.uuid}-${variant.key}`}
+                                                                        className="hover:bg-bg-hover"
+                                                                        style={FIXED_HEIGHT_STYLE}
+                                                                        onMouseEnter={(e) =>
+                                                                            handleTooltipMouseEnter(e, variant)
+                                                                        }
+                                                                        onMouseLeave={handleTooltipMouseLeave}
+                                                                        onMouseMove={(e) =>
+                                                                            handleTooltipMouseMove(e, variant)
+                                                                        }
+                                                                    >
+                                                                        <td
+                                                                            className={`w-20 pt-1 pl-3 pr-3 pb-1 whitespace-nowrap overflow-hidden ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'} ${isLastRow ? 'border-b' : ''}`}
+                                                                            style={FIXED_HEIGHT_STYLE}
+                                                                        >
+                                                                            <VariantTag variantKey={variant.key} />
+                                                                        </td>
+
+                                                                        <td
+                                                                            className={`w-24 pt-1 pl-3 pr-3 pb-1 text-left whitespace-nowrap overflow-hidden ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'} ${isLastRow ? 'border-b' : ''}`}
+                                                                            style={FIXED_HEIGHT_STYLE}
+                                                                        >
+                                                                            <div className="metric-cell">
+                                                                                <div>
+                                                                                    {formatMetricValue(variant, metric)}
+                                                                                </div>
+                                                                                {ratioMetricLabel(variant, metric)}
+                                                                            </div>
+                                                                        </td>
+
+                                                                        <td
+                                                                            className={`w-20 pt-1 pl-3 pr-3 pb-1 text-left whitespace-nowrap overflow-hidden ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'} ${isLastRow ? 'border-b' : ''}`}
+                                                                            style={FIXED_HEIGHT_STYLE}
+                                                                        >
+                                                                            <div className="flex items-center gap-1">
+                                                                                <span
+                                                                                    className={`metric-cell font-bold ${significant ? (winning ? 'text-success' : 'text-danger') : ''}`}
+                                                                                >
+                                                                                    {deltaText}
+                                                                                </span>
+                                                                                {significant &&
+                                                                                    deltaPositive !== undefined && (
+                                                                                        <span
+                                                                                            className={`flex-shrink-0 ${winning ? 'text-success' : 'text-danger'}`}
+                                                                                        >
+                                                                                            {deltaPositive ? (
+                                                                                                <IconTrending
+                                                                                                    className="w-5 h-5"
+                                                                                                    style={{
+                                                                                                        strokeWidth: 2.5,
+                                                                                                    }}
+                                                                                                />
+                                                                                            ) : (
+                                                                                                <IconTrendingDown
+                                                                                                    className="w-5 h-5"
+                                                                                                    style={{
+                                                                                                        strokeWidth: 2.5,
+                                                                                                    }}
+                                                                                                />
+                                                                                            )}
+                                                                                        </span>
+                                                                                    )}
+                                                                            </div>
+                                                                        </td>
+
+                                                                        <td
+                                                                            className={`w-20 pt-1 pl-3 pr-3 pb-1 text-center whitespace-nowrap overflow-hidden ${!significant ? (isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light') : ''} ${isLastRow ? 'border-b' : ''}`}
+                                                                            style={{
+                                                                                ...FIXED_HEIGHT_STYLE,
+                                                                                backgroundColor: significant
+                                                                                    ? winning
+                                                                                        ? `${colors.BAR_POSITIVE}30`
+                                                                                        : `${colors.BAR_NEGATIVE}30`
+                                                                                    : undefined,
+                                                                            }}
+                                                                        >
+                                                                            <span
+                                                                                className={`metric-cell ${significant ? (winning ? 'text-success font-bold' : 'text-danger font-bold') : ''}`}
+                                                                            >
+                                                                                {isBayesianResult(variant)
+                                                                                    ? formatChanceToWinForGoal(
+                                                                                          variant,
+                                                                                          metric.goal
+                                                                                      )
+                                                                                    : formatPValue(variant.p_value)}
+                                                                            </span>
+                                                                        </td>
+
+                                                                        <ChartCell
+                                                                            variantResult={variant}
+                                                                            metric={metric}
+                                                                            axisRange={axisRange}
+                                                                            metricUuid={metric.uuid}
+                                                                            isAlternatingRow={isAlternatingRow}
+                                                                            isLastRow={isLastRow}
+                                                                            isSecondary={false}
+                                                                            gradientSuffix={String(
+                                                                                breakdownResult.breakdown_value
+                                                                            )}
+                                                                        />
+                                                                    </tr>
+                                                                )
+                                                            }
+                                                        )}
+                                                    </React.Fragment>
+                                                )
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ),
+                        },
+                    ]}
+                    onChange={(activeKey) => setIsExpanded(activeKey === 'breakdowns')}
+                />
+            </td>
+        </tr>
+    )
+}
+
+interface MetricRowGroupProps {
+    metric: ExperimentMetric
+    result: NewExperimentQueryResponse | null
+    experiment: Experiment
+    metricType: InsightType
+    metricIndex: number
+    displayOrder: number
+    axisRange: number
+    isSecondary: boolean
+    isLastMetric: boolean
+    isAlternatingRow: boolean
+    onDuplicateMetric?: () => void
+    onBreakdownChange: (breakdown: Breakdown) => void
+    onRemoveBreakdown: (index: number) => void
+    error?: any
+    isLoading?: boolean
+    exposuresLoading?: boolean
+    showDetailsModal: boolean
+}
+
+export function MetricRowGroup({
+    metric,
+    result,
+    experiment,
+    metricType,
+    metricIndex,
+    displayOrder,
+    axisRange,
+    isSecondary,
+    isLastMetric,
+    isAlternatingRow,
+    onDuplicateMetric,
+    onBreakdownChange,
+    onRemoveBreakdown,
+    error,
+    isLoading,
+    exposuresLoading = false,
+    showDetailsModal,
+}: MetricRowGroupProps): JSX.Element {
+    const [isModalOpen, setIsModalOpen] = useState(false)
+    const [timeseriesModalState, setTimeseriesModalState] = useState<{
+        isOpen: boolean
+        variantResult: ExperimentVariantResult | null
+    }>({
+        isOpen: false,
+        variantResult: null,
+    })
+    const [tooltipState, setTooltipState] = useState<{
+        isVisible: boolean
+        variantResult: ExperimentVariantResult | null
+        position: { x: number; y: number }
+        isPositioned: boolean
+    }>({
+        isVisible: false,
+        variantResult: null,
+        position: { x: 0, y: 0 },
+        isPositioned: false,
+    })
+    const tooltipRef = useRef<HTMLDivElement>(null)
+    const colors = useChartColors()
+    const scale = useAxisScale(axisRange, VIEW_BOX_WIDTH, SVG_EDGE_MARGIN)
+
+    const { reportExperimentTimeseriesViewed, retryPrimaryMetric, retrySecondaryMetric } = useActions(experimentLogic)
+
+    // Build retry callback for this metric
+    const handleRetry = (): void => {
+        if (isSecondary) {
+            retrySecondaryMetric(metricIndex)
+        } else {
+            retryPrimaryMetric(metricIndex)
+        }
+    }
+
+    // Build query for debugger link
+    const debugQuery = metric
+        ? {
+              kind: NodeKind.ExperimentQuery,
+              metric: metric,
+              experiment_id: experiment.id,
+          }
+        : undefined
+
+    const timeseriesEnabled = experiment.scheduling_config?.timeseries
+
+    // Helper function to calculate tooltip position
+    const calculateTooltipPosition = (
+        chartCell: HTMLElement,
+        variantResult: ExperimentVariantResult
+    ): { x: number; y: number } | null => {
+        if (!tooltipRef.current) {
+            return null
+        }
+
+        const chartCellRect = chartCell.getBoundingClientRect()
+        const tooltipRect = tooltipRef.current.getBoundingClientRect()
+
+        // Calculate the delta position within the SVG
+        const delta = getDelta(variantResult)
+        const deltaX = scale(delta)
+
+        // Convert SVG coordinates to pixel coordinates
+        const svgToPixelRatio = chartCellRect.width / VIEW_BOX_WIDTH
+        const deltaPixelX = deltaX * svgToPixelRatio
+
+        // Calculate tooltip position: center it above the confidence interval bar
+        let x = chartCellRect.left + deltaPixelX - tooltipRect.width / 2
+        const y = chartCellRect.top - tooltipRect.height - 8
+
+        // Keep tooltip within viewport bounds
+        const padding = 8
+        x = Math.max(padding, Math.min(x, window.innerWidth - tooltipRect.width - padding))
+
+        return { x, y }
+    }
+
+    // Tooltip handlers
+    const handleTooltipMouseEnter = (e: React.MouseEvent, variantResult: ExperimentVariantResult): void => {
+        const chartCell = e.currentTarget.querySelector('[data-table-cell="chart"]') as HTMLElement
+        if (!chartCell) {
+            return
+        }
+
+        const position = calculateTooltipPosition(chartCell, variantResult)
+        setTooltipState({
+            isVisible: true,
+            variantResult,
+            position: position || { x: 0, y: 0 },
+            isPositioned: !!position,
+        })
+    }
+
+    const handleTooltipMouseLeave = (): void => {
+        setTooltipState((prev) => ({
+            ...prev,
+            isVisible: false,
+            variantResult: null,
+            isPositioned: false,
+        }))
+    }
+
+    const handleTooltipMouseMove = (e: React.MouseEvent, variantResult: ExperimentVariantResult): void => {
+        // Only reposition if not already positioned
+        if (!tooltipState.isPositioned) {
+            const chartCell = e.currentTarget.querySelector('[data-table-cell="chart"]') as HTMLElement
+            if (!chartCell) {
+                return
+            }
+
+            const position = calculateTooltipPosition(chartCell, variantResult)
+            if (position) {
+                setTooltipState((prev) => ({
+                    ...prev,
+                    position,
+                    isPositioned: true,
+                }))
+            }
+        }
+    }
+
+    const handleTimeseriesClick = (variantResult: ExperimentVariantResult): void => {
+        setTimeseriesModalState({
+            isOpen: true,
+            variantResult,
+        })
+        reportExperimentTimeseriesViewed(experiment.id, metric)
+    }
+
+    const handleTimeseriesModalClose = (): void => {
+        setTimeseriesModalState({
+            isOpen: false,
+            variantResult: null,
+        })
+    }
+
+    if (isLoading || error || !result) {
+        const hasError = !!error
+        const noResultHeight = hasError ? CELL_HEIGHT : Math.max(CELL_HEIGHT, EMPTY_STATE_ROW_MIN_HEIGHT)
+        const noResultStateStyle = getMinHeightStyle(noResultHeight)
+
+        return (
+            <>
+                <tr className="hover:bg-bg-hover group [&:last-child>td]:border-b-0" style={noResultStateStyle}>
+                    {/* Metric column - always visible */}
+                    <td
+                        className={`w-1/5 border-r p-3 align-top text-left relative overflow-hidden ${
+                            !isLastMetric ? 'border-b' : ''
+                        } ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                        style={noResultStateStyle}
+                    >
+                        <MetricHeader
+                            displayOrder={displayOrder}
+                            metric={metric}
+                            metricType={metricType}
+                            isPrimaryMetric={!isSecondary}
+                            experiment={experiment}
+                            onDuplicateMetricClick={() => onDuplicateMetric?.()}
+                            onBreakdownChange={onBreakdownChange}
+                        />
+                    </td>
+
+                    {/* Combined columns for loading/error state */}
+                    <td
+                        colSpan={6}
+                        className={`p-3 text-center ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'} ${
+                            !isLastMetric ? 'border-b' : ''
+                        }`}
+                        style={noResultStateStyle}
+                    >
+                        {isLoading || exposuresLoading ? (
+                            <ChartLoadingState height={noResultHeight} />
+                        ) : (
+                            <ChartEmptyState
+                                height={noResultHeight}
+                                experimentStarted={isLaunched(experiment)}
+                                metric={metric}
+                                error={error}
+                                query={debugQuery}
+                                onRetry={handleRetry}
+                            />
+                        )}
+                    </td>
+                </tr>
+                {metric.breakdownFilter?.breakdowns && metric.breakdownFilter.breakdowns.length > 0 && (
+                    <BreakdownErrorState
+                        metric={metric}
+                        isAlternatingRow={isAlternatingRow}
+                        onRemoveBreakdown={onRemoveBreakdown}
+                    />
+                )}
+            </>
+        )
+    }
+
+    // At this point, we know result is defined, so we can safely access its properties
+    const baselineResult = result.baseline
+    const variantResults = result.variant_results || []
+    const totalRows = 1 + variantResults.length
+    const totalRowsHeightStyle = getScaledHeightStyle(totalRows)
+
+    const ratioMetricLabel = (variant: ExperimentStatsBaseValidated, metric: ExperimentMetric): JSX.Element => {
+        return (
+            <div className="text-xs text-muted">
+                {(() => {
+                    const { numerator, denominator } = getMetricSubtitleValues(variant, metric)
+                    return (
+                        <>
+                            {humanFriendlyLargeNumber(numerator)} / {humanFriendlyLargeNumber(denominator)}
+                        </>
+                    )
+                })()}
+            </div>
+        )
+    }
+
+    return (
+        <>
+            {/* Tooltip portal */}
+            {tooltipState.isVisible &&
+                tooltipState.variantResult &&
+                createPortal(
+                    <div
+                        ref={tooltipRef}
+                        className={`fixed bg-bg-light border border-border px-3 py-2 rounded-md text-[13px] shadow-md z-[100] min-w-[280px] ${timeseriesEnabled ? 'cursor-pointer hover:border-primary' : ''}`}
+                        style={{
+                            left: tooltipState.position.x,
+                            top: tooltipState.position.y,
+                            visibility: tooltipState.isPositioned ? 'visible' : 'hidden',
+                        }}
+                        onClick={
+                            timeseriesEnabled && tooltipState.variantResult
+                                ? () => handleTimeseriesClick(tooltipState.variantResult!)
+                                : undefined
+                        }
+                    >
+                        {renderTooltipContent(tooltipState.variantResult, metric, timeseriesEnabled)}
+                    </div>,
+                    document.body
+                )}
+
+            {/* Baseline row */}
+            <tr className="hover:bg-bg-hover group [&:last-child>td]:border-b-0" style={FIXED_HEIGHT_STYLE}>
+                {/* Metric column - with rowspan */}
+                <td
+                    className={`w-1/5 border-r p-3 align-top text-left relative overflow-hidden ${!isLastMetric ? 'border-b' : ''} ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                    rowSpan={totalRows}
+                    style={totalRowsHeightStyle}
+                >
+                    <MetricHeader
+                        displayOrder={displayOrder}
+                        metric={metric}
+                        metricType={metricType}
+                        isPrimaryMetric={!isSecondary}
+                        experiment={experiment}
+                        onDuplicateMetricClick={() => onDuplicateMetric?.()}
+                        onBreakdownChange={onBreakdownChange}
+                    />
+                </td>
+
+                {/* Variant name */}
+                <td
+                    className={`w-20 pt-1 pl-3 pr-3 pb-1 whitespace-nowrap overflow-hidden ${
+                        isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'
+                    } ${variantResults.length === 0 ? 'border-b' : ''}`}
+                    style={FIXED_HEIGHT_STYLE}
+                >
+                    <VariantTag variantKey={baselineResult.key} />
+                </td>
+
+                {/* Value */}
+                <td
+                    className={`w-24 pt-1 pl-3 pr-3 pb-1 text-left whitespace-nowrap overflow-hidden ${
+                        isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'
+                    } ${variantResults.length === 0 ? 'border-b' : ''}`}
+                    style={FIXED_HEIGHT_STYLE}
+                >
+                    <div className="metric-cell">
+                        <div>{formatMetricValue(baselineResult, metric)}</div>
+                        {ratioMetricLabel(baselineResult, metric)}
+                    </div>
+                </td>
+
+                {/* Change (empty for baseline) */}
+                <td
+                    className={`w-20 pt-1 pl-3 pr-3 pb-1 text-left whitespace-nowrap overflow-hidden ${
+                        isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'
+                    } ${variantResults.length === 0 ? 'border-b' : ''}`}
+                    style={FIXED_HEIGHT_STYLE}
+                >
+                    <div />
+                </td>
+
+                {/* P-value / Win probability (empty for baseline) */}
+                <td
+                    className={`w-20 pt-1 pl-3 pr-3 pb-1 text-center whitespace-nowrap overflow-hidden ${
+                        isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'
+                    } ${variantResults.length === 0 ? 'border-b' : ''}`}
+                    style={FIXED_HEIGHT_STYLE}
+                >
+                    <div />
+                </td>
+
+                {/* Details column - with rowspan */}
+                <td
+                    className={`w-20 pt-3 align-top relative overflow-hidden ${
+                        !isLastMetric ? 'border-b' : ''
+                    } ${isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'}`}
+                    rowSpan={totalRows}
+                    style={totalRowsHeightStyle}
+                >
+                    {showDetailsModal && (
+                        <>
+                            <div className="flex justify-end">
+                                <DetailsButton metric={metric} setIsModalOpen={setIsModalOpen} />
+                            </div>
+                            <DetailsModal
+                                isOpen={isModalOpen}
+                                onClose={() => setIsModalOpen(false)}
+                                metric={metric}
+                                result={result}
+                                experiment={experiment}
+                            />
+                        </>
+                    )}
+                </td>
+
+                {/* Chart (grid lines only for baseline) */}
+                <td
+                    className={`p-0 align-top text-center relative overflow-hidden ${
+                        isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'
+                    } ${variantResults.length === 0 ? 'border-b' : ''}`}
+                    style={FIXED_HEIGHT_STYLE}
+                >
+                    {axisRange && axisRange > 0 ? (
+                        <div className="relative h-full">
+                            <svg
+                                viewBox={`0 0 ${VIEW_BOX_WIDTH} ${CHART_CELL_VIEW_BOX_HEIGHT}`}
+                                preserveAspectRatio="none"
+                                className="h-full w-full"
+                            >
+                                <GridLines
+                                    tickValues={getNiceTickValues(axisRange)}
+                                    scale={scale}
+                                    height={CHART_CELL_VIEW_BOX_HEIGHT}
+                                    viewBoxWidth={VIEW_BOX_WIDTH}
+                                    zeroLineColor={colors.ZERO_LINE}
+                                    gridLineColor={colors.BOUNDARY_LINES}
+                                    zeroLineWidth={1.25}
+                                    gridLineWidth={0.75}
+                                    opacity={GRID_LINES_OPACITY}
+                                />
+                            </svg>
+                        </div>
+                    ) : (
+                        <div className="flex items-center justify-center h-full text-muted text-xs">—</div>
+                    )}
+                </td>
+            </tr>
+
+            {/* Variant rows */}
+            {variantResults.map((variant, index) => {
+                const isLastRow = index === variantResults.length - 1
+                const significant = isSignificant(variant)
+                const deltaPositive = isDeltaPositive(variant)
+                const winning = isWinning(variant, metric.goal)
+                const deltaText = formatDeltaPercent(variant)
+
+                return (
+                    <tr
+                        key={`${metric.uuid}-${variant.key}`}
+                        className="hover:bg-bg-hover group [&:last-child>td]:border-b-0"
+                        style={FIXED_HEIGHT_STYLE}
+                        onMouseEnter={(e) => handleTooltipMouseEnter(e, variant)}
+                        onMouseLeave={handleTooltipMouseLeave}
+                        onMouseMove={(e) => handleTooltipMouseMove(e, variant)}
+                    >
+                        {/* Variant name */}
+                        <td
+                            className={`w-20 pt-1 pl-3 pr-3 pb-1 text-left whitespace-nowrap overflow-hidden ${
+                                isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'
+                            } ${isLastRow ? 'border-b' : ''}`}
+                            style={FIXED_HEIGHT_STYLE}
+                        >
+                            <VariantTag variantKey={variant.key} />
+                        </td>
+
+                        {/* Value */}
+                        <td
+                            className={`w-24 pt-1 pl-3 pr-3 pb-1 text-left whitespace-nowrap overflow-hidden ${
+                                isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'
+                            } ${isLastRow ? 'border-b' : ''}`}
+                            style={FIXED_HEIGHT_STYLE}
+                        >
+                            <div className="metric-cell">
+                                <div>{formatMetricValue(variant, metric)}</div>
+                                {ratioMetricLabel(variant, metric)}
+                            </div>
+                        </td>
+
+                        {/* Delta */}
+                        <td
+                            className={`w-20 pt-1 pl-3 pr-3 pb-1 text-left whitespace-nowrap overflow-hidden ${
+                                isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light'
+                            } ${isLastRow ? 'border-b' : ''}`}
+                            style={FIXED_HEIGHT_STYLE}
+                        >
+                            <div className="flex items-center gap-1">
+                                <span
+                                    className={`metric-cell font-bold ${significant ? (winning ? 'text-success' : 'text-danger') : ''}`}
+                                >
+                                    {deltaText}
+                                </span>
+                                {significant && deltaPositive !== undefined && (
+                                    <span className={`flex-shrink-0 ${winning ? 'text-success' : 'text-danger'}`}>
+                                        {deltaPositive ? (
+                                            <IconTrending className="w-5 h-5" style={{ strokeWidth: 2.5 }} />
+                                        ) : (
+                                            <IconTrendingDown className="w-5 h-5" style={{ strokeWidth: 2.5 }} />
+                                        )}
+                                    </span>
+                                )}
+                            </div>
+                        </td>
+
+                        {/* P-value / Win probability */}
+                        <td
+                            className={`w-20 pt-1 pl-3 pr-3 pb-1 text-center whitespace-nowrap overflow-hidden ${
+                                !significant ? (isAlternatingRow ? 'bg-bg-table' : 'bg-bg-light') : ''
+                            } ${isLastRow ? 'border-b' : ''}`}
+                            style={{
+                                ...FIXED_HEIGHT_STYLE,
+                                backgroundColor: significant
+                                    ? winning
+                                        ? `${colors.BAR_POSITIVE}30`
+                                        : `${colors.BAR_NEGATIVE}30`
+                                    : undefined,
+                            }}
+                        >
+                            <span
+                                className={`metric-cell ${significant ? (winning ? 'text-success font-bold' : 'text-danger font-bold') : ''}`}
+                            >
+                                {isBayesianResult(variant)
+                                    ? formatChanceToWinForGoal(variant, metric.goal)
+                                    : formatPValue(variant.p_value)}
+                            </span>
+                        </td>
+
+                        {/* Chart */}
+                        <ChartCell
+                            variantResult={variant}
+                            metric={metric}
+                            axisRange={axisRange}
+                            metricUuid={metric.uuid}
+                            isAlternatingRow={isAlternatingRow}
+                            isLastRow={isLastRow}
+                            isSecondary={isSecondary}
+                            onTimeseriesClick={timeseriesEnabled ? () => handleTimeseriesClick(variant) : undefined}
+                        />
+                    </tr>
+                )
+            })}
+
+            {/* Collapsible Breakdown Section */}
+            {result.breakdown_results && result.breakdown_results.length > 0 && (
+                <CollapsibleBreakdownSection
+                    breakdownResults={result.breakdown_results}
+                    metric={metric}
+                    experiment={experiment}
+                    axisRange={axisRange}
+                    isAlternatingRow={isAlternatingRow}
+                    isLastMetric={isLastMetric}
+                    isLoading={isLoading}
+                    exposuresLoading={exposuresLoading}
+                    colors={colors}
+                    scale={scale}
+                    onRemoveBreakdown={onRemoveBreakdown}
+                    onRetry={handleRetry}
+                    query={debugQuery}
+                    handleTooltipMouseEnter={handleTooltipMouseEnter}
+                    handleTooltipMouseLeave={handleTooltipMouseLeave}
+                    handleTooltipMouseMove={handleTooltipMouseMove}
+                />
+            )}
+
+            {timeseriesModalState.variantResult && (
+                <TimeseriesModal
+                    isOpen={timeseriesModalState.isOpen}
+                    onClose={handleTimeseriesModalClose}
+                    metric={metric}
+                    variantResult={timeseriesModalState.variantResult}
+                    experiment={experiment}
+                />
+            )}
+        </>
+    )
+}
