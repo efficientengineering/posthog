@@ -470,7 +470,7 @@ jobs:
           - -c
           - |
             mkdir -p /docker-entrypoint-initdb.d
-            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql \<<'EOF'
             CREATE DATABASE test_posthog;
             CREATE DATABASE posthog_persons;
             CREATE DATABASE posthog_persons_e2e_test;
@@ -496,7 +496,7 @@ jobs:
           - -c
           - |
             mkdir -p /etc/clickhouse-server/config.d
-            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml \<<'EOF'
             <clickhouse>
               <remote_servers replace="replace">
                 <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
@@ -681,7 +681,7 @@ jobs:
       - run:
           name: Push PostHog UDFs to ClickHouse
           command: |
-            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            python3 - \<<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
             import xml.etree.ElementTree as ET, re, urllib.request, sys, os
             if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
                 print('No UDF file; skipping'); sys.exit(0)
@@ -909,7 +909,7 @@ jobs:
           - -c
           - |
             mkdir -p /docker-entrypoint-initdb.d
-            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql \<<'EOF'
             CREATE DATABASE test_posthog;
             CREATE DATABASE posthog_persons;
             CREATE DATABASE posthog_persons_e2e_test;
@@ -935,7 +935,7 @@ jobs:
           - -c
           - |
             mkdir -p /etc/clickhouse-server/config.d
-            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml \<<'EOF'
             <clickhouse>
               <remote_servers replace="replace">
                 <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
@@ -1088,7 +1088,7 @@ jobs:
       - run:
           name: Push PostHog UDFs to ClickHouse
           command: |
-            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            python3 - \<<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
             import xml.etree.ElementTree as ET, re, urllib.request, sys, os
             if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
                 print('No UDF file; skipping'); sys.exit(0)
@@ -1295,7 +1295,7 @@ jobs:
           - -c
           - |
             mkdir -p /docker-entrypoint-initdb.d
-            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql \<<'EOF'
             CREATE DATABASE test_posthog;
             CREATE DATABASE posthog_persons;
             CREATE DATABASE posthog_persons_e2e_test;
@@ -1321,7 +1321,7 @@ jobs:
           - -c
           - |
             mkdir -p /etc/clickhouse-server/config.d
-            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml \<<'EOF'
             <clickhouse>
               <remote_servers replace="replace">
                 <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
@@ -1517,7 +1517,7 @@ jobs:
       - run:
           name: Push PostHog UDFs to ClickHouse
           command: |
-            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            python3 - \<<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
             import xml.etree.ElementTree as ET, re, urllib.request, sys, os
             if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
                 print('No UDF file; skipping'); sys.exit(0)
@@ -1609,7 +1609,7 @@ jobs:
           - -c
           - |
             mkdir -p /docker-entrypoint-initdb.d
-            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql \<<'EOF'
             CREATE DATABASE test_posthog;
             CREATE DATABASE posthog_persons;
             CREATE DATABASE posthog_persons_e2e_test;
@@ -1638,7 +1638,7 @@ jobs:
           - -c
           - |
             mkdir -p /etc/clickhouse-server/config.d
-            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml \<<'EOF'
             <clickhouse>
               <remote_servers replace="replace">
                 <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
@@ -1805,7 +1805,7 @@ jobs:
       - run:
           name: Push PostHog UDFs to ClickHouse
           command: |
-            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            python3 - \<<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
             import xml.etree.ElementTree as ET, re, urllib.request, sys, os
             if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
                 print('No UDF file; skipping'); sys.exit(0)
@@ -2128,7 +2128,7 @@ jobs:
           - -c
           - |
             mkdir -p /docker-entrypoint-initdb.d
-            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql \<<'EOF'
             CREATE DATABASE test_posthog;
             CREATE DATABASE posthog_persons;
             CREATE DATABASE posthog_persons_e2e_test;
@@ -2154,7 +2154,7 @@ jobs:
           - -c
           - |
             mkdir -p /etc/clickhouse-server/config.d
-            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml \<<'EOF'
             <clickhouse>
               <remote_servers replace="replace">
                 <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
@@ -2302,7 +2302,7 @@ jobs:
       - run:
           name: Push PostHog UDFs to ClickHouse
           command: |
-            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            python3 - \<<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
             import xml.etree.ElementTree as ET, re, urllib.request, sys, os
             if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
                 print('No UDF file; skipping'); sys.exit(0)
@@ -2457,7 +2457,7 @@ jobs:
           - -c
           - |
             mkdir -p /docker-entrypoint-initdb.d
-            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql \<<'EOF'
             CREATE DATABASE test_posthog;
             CREATE DATABASE posthog_persons;
             CREATE DATABASE posthog_persons_e2e_test;
@@ -2483,7 +2483,7 @@ jobs:
           - -c
           - |
             mkdir -p /etc/clickhouse-server/config.d
-            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml \<<'EOF'
             <clickhouse>
               <remote_servers replace="replace">
                 <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
@@ -2624,7 +2624,7 @@ jobs:
       - run:
           name: Push PostHog UDFs to ClickHouse
           command: |
-            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            python3 - \<<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
             import xml.etree.ElementTree as ET, re, urllib.request, sys, os
             if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
                 print('No UDF file; skipping'); sys.exit(0)
@@ -3161,7 +3161,7 @@ jobs:
           - -c
           - |
             mkdir -p /docker-entrypoint-initdb.d
-            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql \<<'EOF'
             CREATE DATABASE test_posthog;
             CREATE DATABASE posthog_persons;
             CREATE DATABASE posthog_persons_e2e_test;
@@ -3309,7 +3309,7 @@ jobs:
           - -c
           - |
             mkdir -p /docker-entrypoint-initdb.d
-            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql \<<'EOF'
             CREATE DATABASE test_posthog;
             CREATE DATABASE posthog_persons;
             CREATE DATABASE posthog_persons_e2e_test;
@@ -3335,7 +3335,7 @@ jobs:
           - -c
           - |
             mkdir -p /etc/clickhouse-server/config.d
-            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml \<<'EOF'
             <clickhouse>
               <remote_servers replace="replace">
                 <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
@@ -3469,7 +3469,7 @@ jobs:
       - run:
           name: Push PostHog UDFs to ClickHouse
           command: |
-            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            python3 - \<<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
             import xml.etree.ElementTree as ET, re, urllib.request, sys, os
             if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
                 print('No UDF file; skipping'); sys.exit(0)
@@ -3540,7 +3540,7 @@ jobs:
           - -c
           - |
             mkdir -p /docker-entrypoint-initdb.d
-            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql \<<'EOF'
             CREATE DATABASE test_posthog;
             CREATE DATABASE posthog_persons;
             CREATE DATABASE posthog_persons_e2e_test;
@@ -3566,7 +3566,7 @@ jobs:
           - -c
           - |
             mkdir -p /etc/clickhouse-server/config.d
-            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml \<<'EOF'
             <clickhouse>
               <remote_servers replace="replace">
                 <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
@@ -3706,7 +3706,7 @@ jobs:
       - run:
           name: Push PostHog UDFs to ClickHouse
           command: |
-            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            python3 - \<<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
             import xml.etree.ElementTree as ET, re, urllib.request, sys, os
             if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
                 print('No UDF file; skipping'); sys.exit(0)
