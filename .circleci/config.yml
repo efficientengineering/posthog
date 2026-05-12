@@ -519,6 +519,10 @@ jobs:
               <mark_cache_size>268435456</mark_cache_size>
               <max_server_memory_usage>2147483648</max_server_memory_usage>
               <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+              <zookeeper>
+                <node><host>localhost</host><port>2181</port></node>
+              </zookeeper>
+              <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -958,6 +962,10 @@ jobs:
               <mark_cache_size>268435456</mark_cache_size>
               <max_server_memory_usage>2147483648</max_server_memory_usage>
               <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+              <zookeeper>
+                <node><host>localhost</host><port>2181</port></node>
+              </zookeeper>
+              <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -1344,6 +1352,10 @@ jobs:
               <mark_cache_size>268435456</mark_cache_size>
               <max_server_memory_usage>2147483648</max_server_memory_usage>
               <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+              <zookeeper>
+                <node><host>localhost</host><port>2181</port></node>
+              </zookeeper>
+              <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -1658,6 +1670,10 @@ jobs:
               <max_server_memory_usage_to_ram_ratio>0.2</max_server_memory_usage_to_ram_ratio>
               <background_pool_size>2</background_pool_size>
               <max_thread_pool_size>200</max_thread_pool_size>
+              <zookeeper>
+                <node><host>localhost</host><port>2181</port></node>
+              </zookeeper>
+              <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -2177,6 +2193,10 @@ jobs:
               <mark_cache_size>268435456</mark_cache_size>
               <max_server_memory_usage>2147483648</max_server_memory_usage>
               <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+              <zookeeper>
+                <node><host>localhost</host><port>2181</port></node>
+              </zookeeper>
+              <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -2501,6 +2521,10 @@ jobs:
               <mark_cache_size>268435456</mark_cache_size>
               <max_server_memory_usage>1610612736</max_server_memory_usage>
               <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+              <zookeeper>
+                <node><host>localhost</host><port>2181</port></node>
+              </zookeeper>
+              <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -2924,6 +2948,7 @@ jobs:
             docker compose -f docker-compose.hobby.yml ps || docker ps -a || true
       - run:
           name: Wait for stack health (via docker exec — primary can't reach remote localhost)
+          no_output_timeout: 8m
           command: |
             # Find any running container with a posthog web/app role to exec curl inside
             WEB_CONTAINER=$(docker compose -f docker-compose.hobby.yml ps -q web 2>/dev/null | head -1)
@@ -2935,8 +2960,17 @@ jobs:
               exit 0  # Match previous behavior of "did not become healthy" being non-fatal
             fi
             echo "Probing /_health via container $WEB_CONTAINER"
-            timeout 300 bash -c "until docker exec $WEB_CONTAINER curl -sf http://localhost:8000/_health 2>/dev/null; do sleep 5; done" \
-              || echo "Hobby stack did not become healthy"
+            # Loop with progress output so CCI's no_output_timeout doesn't SIGTERM us
+            for i in $(seq 1 60); do
+              if docker exec "$WEB_CONTAINER" curl -sf http://localhost:8000/_health 2>/dev/null; then
+                echo "Hobby stack healthy after ${i}x5s"
+                exit 0
+              fi
+              [ $((i % 6)) -eq 0 ] && echo "Still waiting (${i}/60)..."
+              sleep 5
+            done
+            echo "Hobby stack did not become healthy in 300s (non-fatal for benchmark)"
+            docker ps -a || true
       - run:
           name: Test Done
           command: echo "STEP_DONE_TEST=$(date +%s%N)"
@@ -3358,6 +3392,10 @@ jobs:
               <mark_cache_size>268435456</mark_cache_size>
               <max_server_memory_usage>2147483648</max_server_memory_usage>
               <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+              <zookeeper>
+                <node><host>localhost</host><port>2181</port></node>
+              </zookeeper>
+              <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -3589,6 +3627,10 @@ jobs:
               <mark_cache_size>268435456</mark_cache_size>
               <max_server_memory_usage>2147483648</max_server_memory_usage>
               <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+              <zookeeper>
+                <node><host>localhost</host><port>2181</port></node>
+              </zookeeper>
+              <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
             </clickhouse>
             EOF
             exec /entrypoint.sh
