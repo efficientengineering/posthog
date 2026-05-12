@@ -93,6 +93,81 @@ jobs:
           command: echo "JOB_DONE_SYSBENCH=$(date +%s%N)"
 
   # ==========================================================================
+  # SYSBENCH (DOCKER) — same suite as sysbench, but on the docker executor
+  # at large.gen2 ($0.0144/min). Canary for cost-model migration.
+  # ==========================================================================
+  sysbench-docker:
+    docker:
+      - image: cimg/base:current
+    resource_class: large.gen2
+    environment:
+      JOB_NAME: sysbench-docker
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_SYSBENCH_DOCKER=$(date +%s%N)"
+      - run:
+          name: Install sysbench
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y sysbench
+      - run:
+          name: System Info
+          command: |
+            echo "RUNNER_LABEL=cci-docker-large-gen2"
+            echo "=== CPU ==="
+            lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|Socket|MHz' || true
+            echo "=== Memory ==="
+            free -h
+            echo "=== Disk ==="
+            df -h .
+            echo "=== Kernel ==="
+            uname -r
+      - run:
+          name: CPU Benchmark
+          command: |
+            echo "BENCH_START_CPU=$(date +%s%N)"
+            sysbench cpu --cpu-max-prime=20000 --threads=2 --time=30 run
+            echo "BENCH_DONE_CPU=$(date +%s%N)"
+      - run:
+          name: Memory Write Benchmark
+          command: |
+            echo "BENCH_START_MEM_WRITE=$(date +%s%N)"
+            sysbench memory --memory-block-size=1K --memory-total-size=10G --memory-oper=write --threads=2 --time=30 run
+            echo "BENCH_DONE_MEM_WRITE=$(date +%s%N)"
+      - run:
+          name: Memory Read Benchmark
+          command: |
+            echo "BENCH_START_MEM_READ=$(date +%s%N)"
+            sysbench memory --memory-block-size=1K --memory-total-size=10G --memory-oper=read --threads=2 --time=30 run
+            echo "BENCH_DONE_MEM_READ=$(date +%s%N)"
+      - run:
+          name: File IO Sequential Write
+          command: |
+            echo "BENCH_START_FILEIO_SEQWR=$(date +%s%N)"
+            sysbench fileio --file-total-size=1G --file-num=4 prepare
+            sysbench fileio --file-total-size=1G --file-num=4 --file-test-mode=seqwr --threads=2 --time=30 run
+            sysbench fileio --file-total-size=1G --file-num=4 cleanup
+            echo "BENCH_DONE_FILEIO_SEQWR=$(date +%s%N)"
+      - run:
+          name: File IO Sequential Read
+          command: |
+            echo "BENCH_START_FILEIO_SEQRD=$(date +%s%N)"
+            sysbench fileio --file-total-size=1G --file-num=4 prepare
+            sysbench fileio --file-total-size=1G --file-num=4 --file-test-mode=seqrd --threads=2 --time=30 run
+            sysbench fileio --file-total-size=1G --file-num=4 cleanup
+            echo "BENCH_DONE_FILEIO_SEQRD=$(date +%s%N)"
+      - run:
+          name: File IO Random Read/Write
+          command: |
+            echo "BENCH_START_FILEIO_RNDRW=$(date +%s%N)"
+            sysbench fileio --file-total-size=1G --file-num=4 prepare
+            sysbench fileio --file-total-size=1G --file-num=4 --file-test-mode=rndrw --threads=2 --time=30 run
+            sysbench fileio --file-total-size=1G --file-num=4 cleanup
+            echo "BENCH_DONE_FILEIO_RNDRW=$(date +%s%N)"
+      - run:
+          name: Job Done
+          command: echo "JOB_DONE_SYSBENCH_DOCKER=$(date +%s%N)"
+
+  # ==========================================================================
   # PYTHON CI — Ruff, mypy, type checking (no Docker needed)
   # ==========================================================================
   python-code-quality:
@@ -2869,6 +2944,7 @@ workflows:
     jobs:
       # Sysbench
       - sysbench
+      - sysbench-docker
 
       # Python CI
       - python-code-quality
