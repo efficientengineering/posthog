@@ -484,18 +484,12 @@ jobs:
           - --memory=1G
           - --overprovisioned
           - --set
-          - redpanda.empty_seed_starts_cluster=false
+          - redpanda.empty_seed_starts_cluster=true
       - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
         command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
-      - image: temporalio/auto-setup:1.22.0
-        environment:
-          DB: postgresql12
-          POSTGRES_USER: posthog
-          POSTGRES_PWD: posthog
-          POSTGRES_SEEDS: localhost
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -601,18 +595,18 @@ jobs:
           command: |
             echo "Waiting for Postgres..."
             for i in $(seq 1 120); do
-              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
               sleep 5
             done
-            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
             echo "Waiting for ClickHouse..."
             for i in $(seq 1 120); do
               if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
               if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
               sleep 5
             done
-            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; exit 1)
             echo "Waiting for Temporal..."
             for i in $(seq 1 60); do
               if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
@@ -835,18 +829,12 @@ jobs:
           - --memory=1G
           - --overprovisioned
           - --set
-          - redpanda.empty_seed_starts_cluster=false
+          - redpanda.empty_seed_starts_cluster=true
       - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
         command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
-      - image: temporalio/auto-setup:1.22.0
-        environment:
-          DB: postgresql12
-          POSTGRES_USER: posthog
-          POSTGRES_PWD: posthog
-          POSTGRES_SEEDS: localhost
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -921,18 +909,18 @@ jobs:
           command: |
             echo "Waiting for Postgres..."
             for i in $(seq 1 120); do
-              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
               sleep 5
             done
-            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
             echo "Waiting for ClickHouse..."
             for i in $(seq 1 120); do
               if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
               if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
               sleep 5
             done
-            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; exit 1)
             echo "Waiting for Temporal..."
             for i in $(seq 1 60); do
               if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
@@ -1130,18 +1118,12 @@ jobs:
           - --memory=1G
           - --overprovisioned
           - --set
-          - redpanda.empty_seed_starts_cluster=false
+          - redpanda.empty_seed_starts_cluster=true
       - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
         command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
-      - image: temporalio/auto-setup:1.22.0
-        environment:
-          DB: postgresql12
-          POSTGRES_USER: posthog
-          POSTGRES_PWD: posthog
-          POSTGRES_SEEDS: localhost
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -1254,18 +1236,18 @@ jobs:
           command: |
             echo "Waiting for Postgres..."
             for i in $(seq 1 120); do
-              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
               sleep 5
             done
-            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
             echo "Waiting for ClickHouse..."
             for i in $(seq 1 120); do
               if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
               if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
               sleep 5
             done
-            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; exit 1)
             echo "Waiting for Temporal..."
             for i in $(seq 1 60); do
               if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
@@ -1430,18 +1412,18 @@ jobs:
           command: |
             echo "Waiting for Postgres..."
             for i in $(seq 1 120); do
-              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
               sleep 5
             done
-            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
             echo "Waiting for ClickHouse..."
             for i in $(seq 1 120); do
               if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
               if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
               sleep 5
             done
-            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; exit 1)
             echo "Waiting for Temporal..."
             for i in $(seq 1 60); do
               if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
@@ -1759,18 +1741,12 @@ jobs:
           - --memory=1G
           - --overprovisioned
           - --set
-          - redpanda.empty_seed_starts_cluster=false
+          - redpanda.empty_seed_starts_cluster=true
       - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
         command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
-      - image: temporalio/auto-setup:1.22.0
-        environment:
-          DB: postgresql12
-          POSTGRES_USER: posthog
-          POSTGRES_PWD: posthog
-          POSTGRES_SEEDS: localhost
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -1840,18 +1816,18 @@ jobs:
           command: |
             echo "Waiting for Postgres..."
             for i in $(seq 1 120); do
-              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
               sleep 5
             done
-            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
             echo "Waiting for ClickHouse..."
             for i in $(seq 1 120); do
               if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
               if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
               sleep 5
             done
-            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; exit 1)
             echo "Waiting for Temporal..."
             for i in $(seq 1 60); do
               if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
@@ -2059,18 +2035,18 @@ jobs:
           command: |
             echo "Waiting for Postgres..."
             for i in $(seq 1 120); do
-              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
               sleep 5
             done
-            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
             echo "Waiting for ClickHouse..."
             for i in $(seq 1 120); do
               if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
               if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
               sleep 5
             done
-            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; exit 1)
             echo "Waiting for Temporal..."
             for i in $(seq 1 60); do
               if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
@@ -2615,11 +2591,11 @@ jobs:
           command: |
             echo "Waiting for Postgres..."
             for i in $(seq 1 120); do
-              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
               sleep 5
             done
-            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
       - run:
           name: Create test_posthog database
           command: |
@@ -2702,18 +2678,12 @@ jobs:
           - --memory=1G
           - --overprovisioned
           - --set
-          - redpanda.empty_seed_starts_cluster=false
+          - redpanda.empty_seed_starts_cluster=true
       - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
         command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
-      - image: temporalio/auto-setup:1.22.0
-        environment:
-          DB: postgresql12
-          POSTGRES_USER: posthog
-          POSTGRES_PWD: posthog
-          POSTGRES_SEEDS: localhost
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -2769,18 +2739,18 @@ jobs:
           command: |
             echo "Waiting for Postgres..."
             for i in $(seq 1 120); do
-              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
               sleep 5
             done
-            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
             echo "Waiting for ClickHouse..."
             for i in $(seq 1 120); do
               if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
               if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
               sleep 5
             done
-            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; exit 1)
             echo "Waiting for Temporal..."
             for i in $(seq 1 60); do
               if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
@@ -2842,18 +2812,12 @@ jobs:
           - --memory=1G
           - --overprovisioned
           - --set
-          - redpanda.empty_seed_starts_cluster=false
+          - redpanda.empty_seed_starts_cluster=true
       - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
         command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
-      - image: temporalio/auto-setup:1.22.0
-        environment:
-          DB: postgresql12
-          POSTGRES_USER: posthog
-          POSTGRES_PWD: posthog
-          POSTGRES_SEEDS: localhost
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -2915,18 +2879,18 @@ jobs:
           command: |
             echo "Waiting for Postgres..."
             for i in $(seq 1 120); do
-              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
               sleep 5
             done
-            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
             echo "Waiting for ClickHouse..."
             for i in $(seq 1 120); do
               if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
               if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
               sleep 5
             done
-            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; exit 1)
             echo "Waiting for Temporal..."
             for i in $(seq 1 60); do
               if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
