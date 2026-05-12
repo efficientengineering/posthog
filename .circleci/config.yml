@@ -489,7 +489,8 @@ jobs:
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
-        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+        entrypoint: sh
+        command: ["-c", "mkdir -p /data/posthog /data/ducklake-dev /data/ai-blobs && minio server --address :19000 --console-address :19001 /data"]
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -834,7 +835,8 @@ jobs:
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
-        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+        entrypoint: sh
+        command: ["-c", "mkdir -p /data/posthog /data/ducklake-dev /data/ai-blobs && minio server --address :19000 --console-address :19001 /data"]
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -1123,7 +1125,8 @@ jobs:
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
-        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+        entrypoint: sh
+        command: ["-c", "mkdir -p /data/posthog /data/ducklake-dev /data/ai-blobs && minio server --address :19000 --console-address :19001 /data"]
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -1261,7 +1264,7 @@ jobs:
       - run:
           name: Create test databases (test_behavioral_cohorts)
           command: |
-            docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE test_behavioral_cohorts;" 2>&1 | grep -v "already exists" || true
+            PGPASSWORD=posthog psql -h localhost -U posthog -d posthog -c "CREATE DATABASE test_behavioral_cohorts;" 2>&1 | grep -v "already exists" || true
       - run:
           name: Set up test databases (mirrors GHA pnpm setup:test slow path)
           environment:
@@ -1452,9 +1455,9 @@ jobs:
           name: Create test databases and run migrations
           command: |
             # Wait for db, then create both posthog_e2e_test (Django) and posthog_persons_e2e_test (Rust persons)
-            until docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
-            docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE posthog_e2e_test;" 2>&1 | grep -v "already exists" || true
-            docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE posthog_persons_e2e_test;" 2>&1 | grep -v "already exists" || true
+            until PGPASSWORD=posthog psql -h localhost -U posthog -d posthog -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
+            PGPASSWORD=posthog psql -h localhost -U posthog -d posthog -c "CREATE DATABASE posthog_e2e_test;" 2>&1 | grep -v "already exists" || true
+            PGPASSWORD=posthog psql -h localhost -U posthog -d posthog -c "CREATE DATABASE posthog_persons_e2e_test;" 2>&1 | grep -v "already exists" || true
             # Django migrations on the main e2e DB
             uv run python manage.py migrate --noinput
             # Rust migrations on the persons-only DB (mirrors GHA's sqlx setup)
@@ -1507,7 +1510,7 @@ jobs:
   storybook-build:
     docker:
       - image: cimg/node:lts
-    resource_class: large.gen2
+    resource_class: 
     environment:
       NODE_OPTIONS: "--max-old-space-size=32768"
     steps:
@@ -1558,7 +1561,7 @@ jobs:
         default: 16
     docker:
       - image: cimg/node:lts-browsers
-    resource_class: large.gen2
+    resource_class: xlarge.gen2  # bumped from large.gen2 (8 GB) — Terser webpack OOMed during minification
     environment:
       NODE_OPTIONS: "--max-old-space-size=16384"
       PNPM_HOME: "/home/circleci/.local/share/pnpm"
@@ -1746,7 +1749,8 @@ jobs:
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
-        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+        entrypoint: sh
+        command: ["-c", "mkdir -p /data/posthog /data/ducklake-dev /data/ai-blobs && minio server --address :19000 --console-address :19001 /data"]
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -2599,8 +2603,9 @@ jobs:
       - run:
           name: Create test_posthog database
           command: |
-            until docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
-            docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE test_posthog;" || echo "test_posthog already exists"
+            command -v psql >/dev/null 2>&1 || (sudo apt-get update -q && sudo apt-get install -y -qq postgresql-client)
+            until PGPASSWORD=posthog psql -h localhost -U posthog -d posthog -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
+            PGPASSWORD=posthog psql -h localhost -U posthog -d posthog -c "CREATE DATABASE test_posthog;" || echo "test_posthog already exists"
       - run:
           name: Set up test database
           command: |
@@ -2683,7 +2688,8 @@ jobs:
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
-        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+        entrypoint: sh
+        command: ["-c", "mkdir -p /data/posthog /data/ducklake-dev /data/ai-blobs && minio server --address :19000 --console-address :19001 /data"]
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
@@ -2817,7 +2823,8 @@ jobs:
         environment:
           MINIO_ROOT_USER: object_storage_root_user
           MINIO_ROOT_PASSWORD: object_storage_root_password
-        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+        entrypoint: sh
+        command: ["-c", "mkdir -p /data/posthog /data/ducklake-dev /data/ai-blobs && minio server --address :19000 --console-address :19001 /data"]
       - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
         environment:
           discovery.type: single-node
