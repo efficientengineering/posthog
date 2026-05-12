@@ -457,9 +457,50 @@ jobs:
       person-on-events:
         type: boolean
         default: false
-    # machine required: docker-compose service stack (CH, PG, Kafka, Redis, Temporal, MinIO)
-    machine:
-      image: ubuntu-2204:current
+    # migrated to docker.large.gen2 ($0.0144/min)
+    docker:
+      - image: cimg/python:3.12-node
+      - image: postgres:15.12-alpine
+        environment:
+          POSTGRES_USER: posthog
+          POSTGRES_DB: posthog
+          POSTGRES_PASSWORD: posthog
+      - image: redis:7.2-alpine
+      - image: clickhouse/clickhouse-server:26.3.9.8
+        environment:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+          KAFKA_HOSTS: "localhost:9092"
+      - image: zookeeper:3.7.0
+      - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
+        command:
+          - redpanda
+          - start
+          - --kafka-addr=internal://0.0.0.0:9092
+          - --advertise-kafka-addr=internal://localhost:9092
+          - --rpc-addr=0.0.0.0:33145
+          - --advertise-rpc-addr=localhost:33145
+          - --mode=dev-container
+          - --smp=1
+          - --memory=1G
+          - --overprovisioned
+          - --set
+          - redpanda.empty_seed_starts_cluster=false
+      - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        environment:
+          MINIO_ROOT_USER: object_storage_root_user
+          MINIO_ROOT_PASSWORD: object_storage_root_password
+        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+      - image: temporalio/auto-setup:1.22.0
+        environment:
+          DB: postgresql12
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+      - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+        environment:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms256m -Xmx256m"
     resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
@@ -491,19 +532,8 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services
-          command: |
-            python3 -c "
-            import re
-            base = open('docker/clickhouse/user_defined_function.xml').read()
-            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
-            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
-            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
-            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
-            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
-            " || true
-            COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch
-          no_output_timeout: 5m
+          name: Skipped (sidecars on docker executor handle services)
+          command: echo "Services running as docker sidecars; no compose up needed"
       - run:
           name: Install uv
           command: |
@@ -680,9 +710,9 @@ jobs:
   # RUST CI — Build + Test (needs Docker Compose for services)
   # ==========================================================================
   rust-build:
-    # machine required: rust workspace + live Postgres for sqlx migrations
-    machine:
-      image: ubuntu-2204:current
+    # migrated to docker.large.gen2 ($0.0144/min)
+    docker:
+      - image: cimg/rust:1.91.1
     resource_class: large.gen2
     steps:
       - run:
@@ -729,9 +759,9 @@ jobs:
             - rust/target
 
   rust-lint:
-    # machine required: rust workspace + live Postgres for sqlx migrations
-    machine:
-      image: ubuntu-2204:current
+    # migrated to docker.large.gen2 ($0.0144/min)
+    docker:
+      - image: cimg/rust:1.91.1
     resource_class: large.gen2
     steps:
       - run:
@@ -778,9 +808,50 @@ jobs:
     parameters:
       packages:
         type: string
-    # machine required: rust workspace + live Postgres for sqlx migrations
-    machine:
-      image: ubuntu-2204:current
+    # migrated to docker.large.gen2 ($0.0144/min)
+    docker:
+      - image: cimg/rust:1.91.1
+      - image: postgres:15.12-alpine
+        environment:
+          POSTGRES_USER: posthog
+          POSTGRES_DB: posthog
+          POSTGRES_PASSWORD: posthog
+      - image: redis:7.2-alpine
+      - image: clickhouse/clickhouse-server:26.3.9.8
+        environment:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+          KAFKA_HOSTS: "localhost:9092"
+      - image: zookeeper:3.7.0
+      - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
+        command:
+          - redpanda
+          - start
+          - --kafka-addr=internal://0.0.0.0:9092
+          - --advertise-kafka-addr=internal://localhost:9092
+          - --rpc-addr=0.0.0.0:33145
+          - --advertise-rpc-addr=localhost:33145
+          - --mode=dev-container
+          - --smp=1
+          - --memory=1G
+          - --overprovisioned
+          - --set
+          - redpanda.empty_seed_starts_cluster=false
+      - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        environment:
+          MINIO_ROOT_USER: object_storage_root_user
+          MINIO_ROOT_PASSWORD: object_storage_root_password
+        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+      - image: temporalio/auto-setup:1.22.0
+        environment:
+          DB: postgresql12
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+      - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+        environment:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms256m -Xmx256m"
     resource_class: large.gen2
     environment:
       SECRET_KEY: "abcdef"
@@ -797,14 +868,8 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services
-          command: |
-            for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
-              echo "Attempt $attempt failed, retrying in 10s..."
-              sleep 10
-            done
-          no_output_timeout: 10m
+          name: Skipped (sidecars on docker executor handle services)
+          command: echo "Services running as docker sidecars; no compose up needed"
       - run:
           name: Install system dependencies
           no_output_timeout: 15m
@@ -1038,9 +1103,50 @@ jobs:
     parameters:
       shard:
         type: integer
-    # machine required: docker-compose service stack
-    machine:
-      image: ubuntu-2204:current
+    # migrated to docker.large.gen2 ($0.0144/min)
+    docker:
+      - image: cimg/python:3.12-node
+      - image: postgres:15.12-alpine
+        environment:
+          POSTGRES_USER: posthog
+          POSTGRES_DB: posthog
+          POSTGRES_PASSWORD: posthog
+      - image: redis:7.2-alpine
+      - image: clickhouse/clickhouse-server:26.3.9.8
+        environment:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+          KAFKA_HOSTS: "localhost:9092"
+      - image: zookeeper:3.7.0
+      - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
+        command:
+          - redpanda
+          - start
+          - --kafka-addr=internal://0.0.0.0:9092
+          - --advertise-kafka-addr=internal://localhost:9092
+          - --rpc-addr=0.0.0.0:33145
+          - --advertise-rpc-addr=localhost:33145
+          - --mode=dev-container
+          - --smp=1
+          - --memory=1G
+          - --overprovisioned
+          - --set
+          - redpanda.empty_seed_starts_cluster=false
+      - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        environment:
+          MINIO_ROOT_USER: object_storage_root_user
+          MINIO_ROOT_PASSWORD: object_storage_root_password
+        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+      - image: temporalio/auto-setup:1.22.0
+        environment:
+          DB: postgresql12
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+      - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+        environment:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms256m -Xmx256m"
     resource_class: large.gen2
     environment:
       REDIS_URL: "redis://localhost"
@@ -1626,9 +1732,50 @@ jobs:
   # DAGSTER CI — Pipeline tests (needs Docker Compose)
   # ==========================================================================
   dagster-tests:
-    # machine required: docker-compose service stack
-    machine:
-      image: ubuntu-2204:current
+    # migrated to docker.large.gen2 ($0.0144/min)
+    docker:
+      - image: cimg/python:3.12-node
+      - image: postgres:15.12-alpine
+        environment:
+          POSTGRES_USER: posthog
+          POSTGRES_DB: posthog
+          POSTGRES_PASSWORD: posthog
+      - image: redis:7.2-alpine
+      - image: clickhouse/clickhouse-server:26.3.9.8
+        environment:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+          KAFKA_HOSTS: "localhost:9092"
+      - image: zookeeper:3.7.0
+      - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
+        command:
+          - redpanda
+          - start
+          - --kafka-addr=internal://0.0.0.0:9092
+          - --advertise-kafka-addr=internal://localhost:9092
+          - --rpc-addr=0.0.0.0:33145
+          - --advertise-rpc-addr=localhost:33145
+          - --mode=dev-container
+          - --smp=1
+          - --memory=1G
+          - --overprovisioned
+          - --set
+          - redpanda.empty_seed_starts_cluster=false
+      - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        environment:
+          MINIO_ROOT_USER: object_storage_root_user
+          MINIO_ROOT_PASSWORD: object_storage_root_password
+        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+      - image: temporalio/auto-setup:1.22.0
+        environment:
+          DB: postgresql12
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+      - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+        environment:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms256m -Xmx256m"
     resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
@@ -1653,19 +1800,8 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services
-          command: |
-            python3 -c "
-            import re
-            base = open('docker/clickhouse/user_defined_function.xml').read()
-            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
-            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
-            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
-            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
-            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
-            " || true
-            COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch
-          no_output_timeout: 5m
+          name: Skipped (sidecars on docker executor handle services)
+          command: echo "Services running as docker sidecars; no compose up needed"
       - run:
           name: Install uv
           command: |
@@ -2413,9 +2549,15 @@ jobs:
   # RUST FLAGS INTEGRATION — Feature flags integration tests
   # ==========================================================================
   rust-flags-integration:
-    # machine required: live Postgres + Kafka for flags integration tests
-    machine:
-      image: ubuntu-2204:current
+    # migrated to docker.large.gen2 ($0.0144/min)
+    docker:
+      - image: cimg/rust:1.91.1
+      - image: postgres:15.12-alpine
+        environment:
+          POSTGRES_USER: posthog
+          POSTGRES_DB: posthog
+          POSTGRES_PASSWORD: posthog
+      - image: redis:7.2-alpine
     resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461b81b72"
@@ -2432,10 +2574,8 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services
-          command: |
-            COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7
-          no_output_timeout: 5m
+          name: Skipped (sidecars on docker executor handle services)
+          command: echo "Services running as docker sidecars; no compose up needed"
       - run:
           name: Install uv
           command: |
@@ -2535,9 +2675,50 @@ jobs:
   # AGENT SKILLS CI — Lint + build agent skills
   # ==========================================================================
   agent-skills-tests:
-    # machine required: docker-compose service stack
-    machine:
-      image: ubuntu-2204:current
+    # migrated to docker.large.gen2 ($0.0144/min)
+    docker:
+      - image: cimg/python:3.12-node
+      - image: postgres:15.12-alpine
+        environment:
+          POSTGRES_USER: posthog
+          POSTGRES_DB: posthog
+          POSTGRES_PASSWORD: posthog
+      - image: redis:7.2-alpine
+      - image: clickhouse/clickhouse-server:26.3.9.8
+        environment:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+          KAFKA_HOSTS: "localhost:9092"
+      - image: zookeeper:3.7.0
+      - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
+        command:
+          - redpanda
+          - start
+          - --kafka-addr=internal://0.0.0.0:9092
+          - --advertise-kafka-addr=internal://localhost:9092
+          - --rpc-addr=0.0.0.0:33145
+          - --advertise-rpc-addr=localhost:33145
+          - --mode=dev-container
+          - --smp=1
+          - --memory=1G
+          - --overprovisioned
+          - --set
+          - redpanda.empty_seed_starts_cluster=false
+      - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        environment:
+          MINIO_ROOT_USER: object_storage_root_user
+          MINIO_ROOT_PASSWORD: object_storage_root_password
+        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+      - image: temporalio/auto-setup:1.22.0
+        environment:
+          DB: postgresql12
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+      - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+        environment:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms256m -Xmx256m"
     resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
@@ -2555,14 +2736,8 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services
-          command: |
-            for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
-              echo "Attempt $attempt failed, retrying in 10s..."
-              sleep 10
-            done
-          no_output_timeout: 10m
+          name: Skipped (sidecars on docker executor handle services)
+          command: echo "Services running as docker sidecars; no compose up needed"
       - run:
           name: Install uv
           command: |
@@ -2640,9 +2815,50 @@ jobs:
         type: string
       test-paths:
         type: string
-    # machine required: docker-compose service stack
-    machine:
-      image: ubuntu-2204:current
+    # migrated to docker.large.gen2 ($0.0144/min)
+    docker:
+      - image: cimg/python:3.12-node
+      - image: postgres:15.12-alpine
+        environment:
+          POSTGRES_USER: posthog
+          POSTGRES_DB: posthog
+          POSTGRES_PASSWORD: posthog
+      - image: redis:7.2-alpine
+      - image: clickhouse/clickhouse-server:26.3.9.8
+        environment:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+          KAFKA_HOSTS: "localhost:9092"
+      - image: zookeeper:3.7.0
+      - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
+        command:
+          - redpanda
+          - start
+          - --kafka-addr=internal://0.0.0.0:9092
+          - --advertise-kafka-addr=internal://localhost:9092
+          - --rpc-addr=0.0.0.0:33145
+          - --advertise-rpc-addr=localhost:33145
+          - --mode=dev-container
+          - --smp=1
+          - --memory=1G
+          - --overprovisioned
+          - --set
+          - redpanda.empty_seed_starts_cluster=false
+      - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        environment:
+          MINIO_ROOT_USER: object_storage_root_user
+          MINIO_ROOT_PASSWORD: object_storage_root_password
+        command: ["server", "--address", ":19000", "--console-address", ":19001", "/data"]
+      - image: temporalio/auto-setup:1.22.0
+        environment:
+          DB: postgresql12
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+      - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+        environment:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: "-Xms256m -Xmx256m"
     resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
@@ -2666,14 +2882,8 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services
-          command: |
-            for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
-              echo "Attempt $attempt failed, retrying in 10s..."
-              sleep 10
-            done
-          no_output_timeout: 10m
+          name: Skipped (sidecars on docker executor handle services)
+          command: echo "Services running as docker sidecars; no compose up needed"
       - run:
           name: Add service hostnames
           command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
