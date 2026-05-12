@@ -465,11 +465,63 @@ jobs:
           POSTGRES_USER: posthog
           POSTGRES_DB: posthog
           POSTGRES_PASSWORD: posthog
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /docker-entrypoint-initdb.d
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            CREATE DATABASE test_posthog;
+            CREATE DATABASE posthog_persons;
+            CREATE DATABASE posthog_persons_e2e_test;
+            CREATE DATABASE posthog_e2e_test;
+            CREATE DATABASE test_behavioral_cohorts;
+            CREATE DATABASE cyclotron;
+            CREATE DATABASE cyclotron_node;
+            CREATE DATABASE dagster_test;
+            CREATE DATABASE temporal;
+            CREATE DATABASE temporal_visibility;
+            GRANT ALL PRIVILEGES ON DATABASE test_posthog TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal_visibility TO posthog;
+            EOF
+            exec docker-entrypoint.sh postgres
       - image: redis:7.2-alpine
       - image: clickhouse/clickhouse-server:26.3.9.8
         environment:
           CLICKHOUSE_SKIP_USER_SETUP: "1"
           KAFKA_HOSTS: "localhost:9092"
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /etc/clickhouse-server/config.d
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            <clickhouse>
+              <remote_servers replace="replace">
+                <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
+                <posthog_single_shard><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_single_shard>
+                <posthog_migrations><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_migrations>
+                <posthog_writable><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_writable>
+                <posthog_primary_replica><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_primary_replica>
+                <ai_events><shard><replica><host>localhost</host><port>9000</port></replica></shard></ai_events>
+                <aux><shard><replica><host>localhost</host><port>9000</port></replica></shard></aux>
+                <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
+                <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
+              </remote_servers>
+              <macros>
+                <shard>01</shard>
+                <replica>ch1</replica>
+                <hostClusterType>online</hostClusterType>
+                <hostClusterRole>data</hostClusterRole>
+              </macros>
+              <uncompressed_cache_size>268435456</uncompressed_cache_size>
+              <mark_cache_size>268435456</mark_cache_size>
+              <max_server_memory_usage>2147483648</max_server_memory_usage>
+              <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+            </clickhouse>
+            EOF
+            exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
         command:
@@ -496,6 +548,16 @@ jobs:
           discovery.type: single-node
           xpack.security.enabled: "false"
           ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+      - image: temporalio/auto-setup:1.22
+        environment:
+          DB: postgres12
+          DB_PORT: "5432"
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+          DBNAME: temporal
+          VISIBILITY_DBNAME: temporal_visibility
+          LOG_LEVEL: warn
     resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
@@ -616,6 +678,37 @@ jobs:
             done
             nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
             echo "Services ready"
+      - run:
+          name: Push PostHog UDFs to ClickHouse
+          command: |
+            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            import xml.etree.ElementTree as ET, re, urllib.request, sys, os
+            if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
+                print('No UDF file; skipping'); sys.exit(0)
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            try:
+                latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+                funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+                merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            except FileNotFoundError:
+                merged = base
+            root = ET.fromstring(merged)
+            pushed = skipped = 0
+            for fn in root.findall('.//function'):
+                ftype = (fn.findtext('type') or 'sql').lower()
+                name = fn.findtext('name')
+                body = fn.findtext('lambda') or fn.findtext('command')
+                if ftype not in ('executable', 'executable_pool') and name and body:
+                    stmt = f"CREATE OR REPLACE FUNCTION {name} AS {body}"
+                    try:
+                        urllib.request.urlopen(urllib.request.Request('http://localhost:8123/', data=stmt.encode(), method='POST'), timeout=10).read()
+                        pushed += 1
+                    except Exception as e:
+                        print(f'WARN: UDF {name}: {e}', file=sys.stderr)
+                else:
+                    skipped += 1
+            print(f'UDFs: {pushed} pushed, {skipped} skipped')
+            PYEOF
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -811,11 +904,63 @@ jobs:
           POSTGRES_USER: posthog
           POSTGRES_DB: posthog
           POSTGRES_PASSWORD: posthog
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /docker-entrypoint-initdb.d
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            CREATE DATABASE test_posthog;
+            CREATE DATABASE posthog_persons;
+            CREATE DATABASE posthog_persons_e2e_test;
+            CREATE DATABASE posthog_e2e_test;
+            CREATE DATABASE test_behavioral_cohorts;
+            CREATE DATABASE cyclotron;
+            CREATE DATABASE cyclotron_node;
+            CREATE DATABASE dagster_test;
+            CREATE DATABASE temporal;
+            CREATE DATABASE temporal_visibility;
+            GRANT ALL PRIVILEGES ON DATABASE test_posthog TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal_visibility TO posthog;
+            EOF
+            exec docker-entrypoint.sh postgres
       - image: redis:7.2-alpine
       - image: clickhouse/clickhouse-server:26.3.9.8
         environment:
           CLICKHOUSE_SKIP_USER_SETUP: "1"
           KAFKA_HOSTS: "localhost:9092"
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /etc/clickhouse-server/config.d
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            <clickhouse>
+              <remote_servers replace="replace">
+                <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
+                <posthog_single_shard><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_single_shard>
+                <posthog_migrations><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_migrations>
+                <posthog_writable><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_writable>
+                <posthog_primary_replica><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_primary_replica>
+                <ai_events><shard><replica><host>localhost</host><port>9000</port></replica></shard></ai_events>
+                <aux><shard><replica><host>localhost</host><port>9000</port></replica></shard></aux>
+                <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
+                <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
+              </remote_servers>
+              <macros>
+                <shard>01</shard>
+                <replica>ch1</replica>
+                <hostClusterType>online</hostClusterType>
+                <hostClusterRole>data</hostClusterRole>
+              </macros>
+              <uncompressed_cache_size>268435456</uncompressed_cache_size>
+              <mark_cache_size>268435456</mark_cache_size>
+              <max_server_memory_usage>2147483648</max_server_memory_usage>
+              <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+            </clickhouse>
+            EOF
+            exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
         command:
@@ -842,6 +987,16 @@ jobs:
           discovery.type: single-node
           xpack.security.enabled: "false"
           ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+      - image: temporalio/auto-setup:1.22
+        environment:
+          DB: postgres12
+          DB_PORT: "5432"
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+          DBNAME: temporal
+          VISIBILITY_DBNAME: temporal_visibility
+          LOG_LEVEL: warn
     resource_class: large.gen2
     environment:
       SECRET_KEY: "abcdef"
@@ -930,6 +1085,40 @@ jobs:
               sleep 5
             done
             nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+      - run:
+          name: Push PostHog UDFs to ClickHouse
+          command: |
+            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            import xml.etree.ElementTree as ET, re, urllib.request, sys, os
+            if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
+                print('No UDF file; skipping'); sys.exit(0)
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            try:
+                latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+                funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+                merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            except FileNotFoundError:
+                merged = base
+            root = ET.fromstring(merged)
+            pushed = skipped = 0
+            for fn in root.findall('.//function'):
+                ftype = (fn.findtext('type') or 'sql').lower()
+                name = fn.findtext('name')
+                body = fn.findtext('lambda') or fn.findtext('command')
+                if ftype != 'executable_pool' and ftype != 'executable' and name and body:
+                    stmt = f"CREATE OR REPLACE FUNCTION {name} AS {body}"
+                    try:
+                        urllib.request.urlopen(
+                            urllib.request.Request('http://localhost:8123/', data=stmt.encode(), method='POST'),
+                            timeout=10
+                        ).read()
+                        pushed += 1
+                    except Exception as e:
+                        print(f'WARN: UDF {name} push failed: {e}', file=sys.stderr)
+                else:
+                    skipped += 1
+            print(f'UDFs: {pushed} pushed, {skipped} skipped (executable UDFs not supported on docker sidecar)')
+            PYEOF
       - run:
           name: Set up test databases
           command: uv run python manage.py setup_test_environment
@@ -1101,11 +1290,63 @@ jobs:
           POSTGRES_USER: posthog
           POSTGRES_DB: posthog
           POSTGRES_PASSWORD: posthog
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /docker-entrypoint-initdb.d
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            CREATE DATABASE test_posthog;
+            CREATE DATABASE posthog_persons;
+            CREATE DATABASE posthog_persons_e2e_test;
+            CREATE DATABASE posthog_e2e_test;
+            CREATE DATABASE test_behavioral_cohorts;
+            CREATE DATABASE cyclotron;
+            CREATE DATABASE cyclotron_node;
+            CREATE DATABASE dagster_test;
+            CREATE DATABASE temporal;
+            CREATE DATABASE temporal_visibility;
+            GRANT ALL PRIVILEGES ON DATABASE test_posthog TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal_visibility TO posthog;
+            EOF
+            exec docker-entrypoint.sh postgres
       - image: redis:7.2-alpine
       - image: clickhouse/clickhouse-server:26.3.9.8
         environment:
           CLICKHOUSE_SKIP_USER_SETUP: "1"
           KAFKA_HOSTS: "localhost:9092"
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /etc/clickhouse-server/config.d
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            <clickhouse>
+              <remote_servers replace="replace">
+                <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
+                <posthog_single_shard><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_single_shard>
+                <posthog_migrations><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_migrations>
+                <posthog_writable><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_writable>
+                <posthog_primary_replica><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_primary_replica>
+                <ai_events><shard><replica><host>localhost</host><port>9000</port></replica></shard></ai_events>
+                <aux><shard><replica><host>localhost</host><port>9000</port></replica></shard></aux>
+                <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
+                <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
+              </remote_servers>
+              <macros>
+                <shard>01</shard>
+                <replica>ch1</replica>
+                <hostClusterType>online</hostClusterType>
+                <hostClusterRole>data</hostClusterRole>
+              </macros>
+              <uncompressed_cache_size>268435456</uncompressed_cache_size>
+              <mark_cache_size>268435456</mark_cache_size>
+              <max_server_memory_usage>2147483648</max_server_memory_usage>
+              <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+            </clickhouse>
+            EOF
+            exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
         command:
@@ -1132,6 +1373,16 @@ jobs:
           discovery.type: single-node
           xpack.security.enabled: "false"
           ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+      - image: temporalio/auto-setup:1.22
+        environment:
+          DB: postgres12
+          DB_PORT: "5432"
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+          DBNAME: temporal
+          VISIBILITY_DBNAME: temporal_visibility
+          LOG_LEVEL: warn
     resource_class: large.gen2
     environment:
       REDIS_URL: "redis://localhost"
@@ -1201,8 +1452,13 @@ jobs:
       - run:
           name: Install pnpm + Node
           command: |
-            npm install -g pnpm || curl -fsSL https://get.pnpm.io/install.sh | sh -
-            echo 'export PATH="$HOME/.local/share/pnpm:$PATH"' >> "$BASH_ENV"
+            # corepack ships with cimg/python:3.12-node; avoids EACCES on /usr/local/lib/node_modules
+            # that hits when running `npm install -g pnpm` as non-root.
+            mkdir -p "$HOME/.local/share/pnpm" "$HOME/.local/bin"
+            export COREPACK_HOME="$HOME/.cache/corepack"
+            corepack enable --install-directory "$HOME/.local/bin"
+            corepack prepare pnpm@11.1.1 --activate
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - restore_cache:
           keys:
             - sqlx-cli-v0.8.3-{{ arch }}
@@ -1259,6 +1515,40 @@ jobs:
             done
             nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
       - run:
+          name: Push PostHog UDFs to ClickHouse
+          command: |
+            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            import xml.etree.ElementTree as ET, re, urllib.request, sys, os
+            if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
+                print('No UDF file; skipping'); sys.exit(0)
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            try:
+                latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+                funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+                merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            except FileNotFoundError:
+                merged = base
+            root = ET.fromstring(merged)
+            pushed = skipped = 0
+            for fn in root.findall('.//function'):
+                ftype = (fn.findtext('type') or 'sql').lower()
+                name = fn.findtext('name')
+                body = fn.findtext('lambda') or fn.findtext('command')
+                if ftype != 'executable_pool' and ftype != 'executable' and name and body:
+                    stmt = f"CREATE OR REPLACE FUNCTION {name} AS {body}"
+                    try:
+                        urllib.request.urlopen(
+                            urllib.request.Request('http://localhost:8123/', data=stmt.encode(), method='POST'),
+                            timeout=10
+                        ).read()
+                        pushed += 1
+                    except Exception as e:
+                        print(f'WARN: UDF {name} push failed: {e}', file=sys.stderr)
+                else:
+                    skipped += 1
+            print(f'UDFs: {pushed} pushed, {skipped} skipped (executable UDFs not supported on docker sidecar)')
+            PYEOF
+      - run:
           name: Download MaxMind DB
           command: ./bin/download-mmdb || true
       - run:
@@ -1300,10 +1590,111 @@ jobs:
   # E2E PLAYWRIGHT — Full stack E2E tests (machine xlarge for 8 vCPU)
   # ==========================================================================
   e2e-playwright:
-    # machine required: docker-compose service stack + Playwright browser
-    machine:
-      image: ubuntu-2204:current
-    resource_class: xlarge.gen2  # match GHA depot-ubuntu-latest-8 (8 vCPU). Verified against ci-e2e-playwright.yml: PostHog downsized from 16 to 8 cores in PR #46853 — "the workload 'is not resource constrained' even after sharding was removed." 2xlarge.gen2 (16) was 2x oversized.
+    # migrated to docker.large.gen2: sidecars replace docker-compose, PostHog web runs in primary.
+    # Note: this is aggressive — 32GB→8GB RAM ceiling. Sidecars trimmed (CH caches, ZK heap,
+    # Redpanda memory, dropped ES + maildev), Playwright --workers=1 (was 4), 1 ingestion worker
+    # (was 6). Expect 1-2 OOM-tune iterations before green. If it never fits in 8GB, bump to
+    # docker.xlarge.gen2 (cost arb erodes: ~$0.0288 vs machine.xlarge.gen2 ~$0.044).
+    docker:
+      - image: mcr.microsoft.com/playwright:v1.50.0-jammy
+        environment:
+          DEBIAN_FRONTEND: noninteractive
+      - image: postgres:15.12-alpine
+        environment:
+          POSTGRES_USER: posthog
+          POSTGRES_DB: posthog
+          POSTGRES_PASSWORD: posthog
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /docker-entrypoint-initdb.d
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            CREATE DATABASE test_posthog;
+            CREATE DATABASE posthog_persons;
+            CREATE DATABASE posthog_persons_e2e_test;
+            CREATE DATABASE posthog_e2e_test;
+            CREATE DATABASE test_behavioral_cohorts;
+            CREATE DATABASE cyclotron;
+            CREATE DATABASE cyclotron_node;
+            CREATE DATABASE dagster_test;
+            CREATE DATABASE temporal;
+            CREATE DATABASE temporal_visibility;
+            GRANT ALL PRIVILEGES ON DATABASE test_posthog TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE posthog_e2e_test TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE posthog_persons_e2e_test TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal_visibility TO posthog;
+            EOF
+            exec docker-entrypoint.sh postgres -c shared_buffers=128MB -c work_mem=4MB -c max_connections=100
+      - image: redis:7.2-alpine
+        command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+      - image: clickhouse/clickhouse-server:26.3.9.8
+        environment:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+          KAFKA_HOSTS: "localhost:9092"
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /etc/clickhouse-server/config.d
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            <clickhouse>
+              <remote_servers replace="replace">
+                <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
+                <posthog_single_shard><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_single_shard>
+                <posthog_migrations><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_migrations>
+                <posthog_writable><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_writable>
+                <posthog_primary_replica><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_primary_replica>
+                <ai_events><shard><replica><host>localhost</host><port>9000</port></replica></shard></ai_events>
+                <aux><shard><replica><host>localhost</host><port>9000</port></replica></shard></aux>
+                <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
+                <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
+              </remote_servers>
+              <macros><shard>01</shard><replica>ch1</replica><hostClusterType>online</hostClusterType><hostClusterRole>data</hostClusterRole></macros>
+              <uncompressed_cache_size>268435456</uncompressed_cache_size>
+              <mark_cache_size>268435456</mark_cache_size>
+              <max_server_memory_usage>1610612736</max_server_memory_usage>
+              <max_server_memory_usage_to_ram_ratio>0.2</max_server_memory_usage_to_ram_ratio>
+              <background_pool_size>2</background_pool_size>
+              <max_thread_pool_size>200</max_thread_pool_size>
+            </clickhouse>
+            EOF
+            exec /entrypoint.sh
+      - image: zookeeper:3.7.0
+        environment:
+          JVMFLAGS: "-Xms128m -Xmx128m"
+      - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
+        command:
+          - redpanda
+          - start
+          - --kafka-addr=internal://0.0.0.0:9092
+          - --advertise-kafka-addr=internal://localhost:9092
+          - --rpc-addr=0.0.0.0:33145
+          - --advertise-rpc-addr=localhost:33145
+          - --mode=dev-container
+          - --smp=1
+          - --memory=512M
+          - --overprovisioned
+          - --set
+          - redpanda.empty_seed_starts_cluster=true
+      - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        environment:
+          MINIO_ROOT_USER: object_storage_root_user
+          MINIO_ROOT_PASSWORD: object_storage_root_password
+        entrypoint: sh
+        command: ["-c", "mkdir -p /data/posthog /data/ducklake-dev /data/ai-blobs && minio server --address :19000 --console-address :19001 /data"]
+      - image: temporalio/auto-setup:1.22
+        environment:
+          DB: postgres12
+          DB_PORT: "5432"
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+          DBNAME: temporal
+          VISIBILITY_DBNAME: temporal_visibility
+          LOG_LEVEL: warn
+    resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
       DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog_e2e_test"
@@ -1320,7 +1711,7 @@ jobs:
       CLICKHOUSE_SECURE: "False"
       CLICKHOUSE_VERIFY: "False"
       CLICKHOUSE_DATABASE: "posthog_test"
-      KAFKA_HOSTS: "kafka:9092"
+      KAFKA_HOSTS: "localhost:9092"
       DISABLE_SECURE_SSL_REDIRECT: "1"
       SECURE_COOKIES: "0"
       OPT_OUT_CAPTURE: "0"
@@ -1337,6 +1728,8 @@ jobs:
       CELERY_METRICS_PORT: "8999"
       CLOUD_DEPLOYMENT: "E2E"
       UV_HTTP_TIMEOUT: "120"
+      NODE_OPTIONS: "--max-old-space-size=2048"
+      PLAYWRIGHT_BROWSERS_PATH: "/ms-playwright"
     steps:
       - run:
           name: Job Start
@@ -1346,55 +1739,42 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services (capture+temporal+ingestion stack to mirror GHA e2e)
-          command: |
-            python3 -c "
-            import re
-            base = open('docker/clickhouse/user_defined_function.xml').read()
-            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
-            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
-            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
-            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
-            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
-            " || true
-            # GHA e2e-playwright starts capture+temporal+ingestion stack: plugins + 6 ingestion workers + maildev for password reset emails
-            docker compose -f docker-compose.dev.yml -f docker-compose.profiles.yml down || true
-            COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=capture,temporal,ingestion docker compose up -d \
-              db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch maildev \
-              plugins ingestion-general ingestion-sessionreplay recording-api ingestion-error-tracking ingestion-logs ingestion-traces
-          no_output_timeout: 8m
-      - run:
-          name: Add service hostnames
-          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
-      - run:
-          name: Install uv
-          command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
-      - run:
-          name: Install Python 3.12
-          command: uv python install 3.12
-      - run:
-          name: Install SAML dependencies
+          name: Install Python toolchain (mcr.microsoft.com/playwright image ships node + browsers; need uv)
           no_output_timeout: 15m
           command: |
             export DEBIAN_FRONTEND=noninteractive
-            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
-            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
+            apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+              python3.12 python3.12-venv python3.12-dev build-essential \
+              libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli \
+              curl ca-certificates postgresql-client netcat-openbsd || true
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Rust
           command: |
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
             echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
       - run:
-          name: Install pnpm
-          command: npm install -g pnpm
+          name: Install pnpm via corepack
+          command: |
+            mkdir -p "$HOME/.local/bin"
+            corepack enable --install-directory "$HOME/.local/bin"
+            corepack prepare pnpm@11.1.1 --activate
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Start Install
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - restore_cache:
+          keys:
+            - uv-e2e-{{ checksum "uv.lock" }}
       - run:
           name: Install Python dependencies
           command: uv sync --frozen --dev
+      - save_cache:
+          key: uv-e2e-{{ checksum "uv.lock" }}
+          paths:
+            - ~/.cache/uv
       - run:
           name: Install Node dependencies
           command: |
@@ -1410,30 +1790,49 @@ jobs:
             touch frontend/dist/index.html frontend/dist/layout.html frontend/dist/exporter.html
             ./bin/download-mmdb || true
       - run:
-          name: Wait for Docker services
+          name: Wait for sidecar services
           no_output_timeout: 15m
           command: |
             echo "Waiting for Postgres..."
-            for i in $(seq 1 120); do
-              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
-              sleep 5
-            done
-            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
+            for i in $(seq 1 120); do nc -z localhost 5432 2>/dev/null && break; sleep 5; done
+            nc -z localhost 5432 || (echo "Postgres failed"; exit 1)
             echo "Waiting for ClickHouse..."
-            for i in $(seq 1 120); do
-              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
-              sleep 5
-            done
+            for i in $(seq 1 120); do curl -sf http://localhost:8123/ping 2>/dev/null && break; sleep 5; done
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; exit 1)
             echo "Waiting for Temporal..."
-            for i in $(seq 1 60); do
-              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
-              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
-              sleep 5
-            done
-            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+            for i in $(seq 1 60); do nc -z localhost 7233 2>/dev/null && break; sleep 5; done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing)"
+      - run:
+          name: Push PostHog UDFs to ClickHouse
+          command: |
+            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            import xml.etree.ElementTree as ET, re, urllib.request, sys, os
+            if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
+                print('No UDF file; skipping'); sys.exit(0)
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            try:
+                latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+                funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+                merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            except FileNotFoundError:
+                merged = base
+            root = ET.fromstring(merged)
+            pushed = skipped = 0
+            for fn in root.findall('.//function'):
+                ftype = (fn.findtext('type') or 'sql').lower()
+                name = fn.findtext('name')
+                body = fn.findtext('lambda') or fn.findtext('command')
+                if ftype not in ('executable', 'executable_pool') and name and body:
+                    stmt = f"CREATE OR REPLACE FUNCTION {name} AS {body}"
+                    try:
+                        urllib.request.urlopen(urllib.request.Request('http://localhost:8123/', data=stmt.encode(), method='POST'), timeout=10).read()
+                        pushed += 1
+                    except Exception as e:
+                        print(f'WARN: UDF {name}: {e}', file=sys.stderr)
+                else:
+                    skipped += 1
+            print(f'UDFs: {pushed} pushed, {skipped} skipped')
+            PYEOF
       - run:
           name: Build frontend
           command: |
@@ -1452,38 +1851,21 @@ jobs:
               cargo install sqlx-cli --version 0.8.3 --no-default-features --features native-tls,postgres
             fi
       - run:
-          name: Create test databases and run migrations
+          name: Run migrations (DBs pre-created by Postgres sidecar init.sql)
           command: |
-            # Wait for db, then create both posthog_e2e_test (Django) and posthog_persons_e2e_test (Rust persons)
-            until PGPASSWORD=posthog psql -h localhost -U posthog -d posthog -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
-            PGPASSWORD=posthog psql -h localhost -U posthog -d posthog -c "CREATE DATABASE posthog_e2e_test;" 2>&1 | grep -v "already exists" || true
-            PGPASSWORD=posthog psql -h localhost -U posthog -d posthog -c "CREATE DATABASE posthog_persons_e2e_test;" 2>&1 | grep -v "already exists" || true
-            # Django migrations on the main e2e DB
             uv run python manage.py migrate --noinput
-            # Rust migrations on the persons-only DB (mirrors GHA's sqlx setup)
             sqlx migrate run -D "$PERSONS_DB_WRITER_URL" --source rust/persons_migrations/ || true
             uv run python manage.py migrate_clickhouse 2>&1
             uv run python manage.py setup_dev
       - run:
-          name: Install Playwright browsers
+          name: Start PostHog web, Celery worker, Temporal worker (single worker each — 8GB ceiling)
+          no_output_timeout: 3m
           command: |
-            # --with-deps runs apt-get; needrestart (Ubuntu 22.04) opens an interactive dialog when
-            # libraries change. NEEDRESTART_MODE=a auto-restarts daemons without prompting.
-            export DEBIAN_FRONTEND=noninteractive
-            export NEEDRESTART_MODE=a
-            export NEEDRESTART_SUSPEND=1
-            pnpm --filter=@posthog/playwright exec playwright install chromium --with-deps
-          no_output_timeout: 15m
-      - run:
-          name: Start PostHog web, Celery worker, Temporal worker (mirror GHA e2e)
-          command: |
-            # Source celery-queues.env so the worker consumes 'exports' queue (needed for CSV/XLSX export tests)
             source ./bin/celery-queues.env
             export CELERY_WORKER_QUEUES
-            uv run python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
+            uv run python manage.py run_autoreload_celery --type=worker --concurrency=1 &> /tmp/celery.log &
             uv run python manage.py start_temporal_worker --task-queue analytics-platform-task-queue &> /tmp/temporal-worker.log &
-            uv run python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --log-level debug --workers 2 &> /tmp/server.log &
-          no_output_timeout: 3m
+            uv run python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --workers 1 &> /tmp/server.log &
       - run:
           name: Wait for PostHog to be ready
           command: |
@@ -1491,18 +1873,28 @@ jobs:
               echo "=== PostHog server failed to start; dumping logs ==="
               echo "--- /tmp/server.log ---"; tail -200 /tmp/server.log 2>/dev/null || echo "(no server log)"
               echo "--- /tmp/celery.log ---"; tail -200 /tmp/celery.log 2>/dev/null || echo "(no celery log)"
+              echo "--- /tmp/temporal-worker.log ---"; tail -200 /tmp/temporal-worker.log 2>/dev/null || echo "(no temporal-worker log)"
+              free -m; ps aux --sort=-%mem | head -20
               exit 1
             fi
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
       - run:
-          name: Run Playwright tests
-          command: pnpm --filter=@posthog/playwright exec playwright test --workers=4 --max-failures=5 --update-snapshots
+          name: Run Playwright tests (workers=1 — was 4 on machine.xlarge.gen2's 32GB)
+          command: pnpm --filter=@posthog/playwright exec playwright test --workers=1 --update-snapshots
           no_output_timeout: 45m
       - run:
           name: Test Done
           command: echo "STEP_DONE_TEST=$(date +%s%N)"
+      - run:
+          name: Dump logs on failure
+          when: on_fail
+          command: |
+            echo "=== web.log ===" && tail -300 /tmp/server.log 2>/dev/null || true
+            echo "=== celery.log ===" && tail -200 /tmp/celery.log 2>/dev/null || true
+            echo "=== temporal-worker.log ===" && tail -200 /tmp/temporal-worker.log 2>/dev/null || true
+            free -m; ps aux --sort=-%mem | head -30
 
   # ==========================================================================
   # STORYBOOK — Build + Visual regression (simplified: 4 shards)
@@ -1510,9 +1902,9 @@ jobs:
   storybook-build:
     docker:
       - image: cimg/node:lts
-    resource_class: 
+    resource_class: xlarge.gen2
     environment:
-      NODE_OPTIONS: "--max-old-space-size=32768"
+      NODE_OPTIONS: "--max-old-space-size=12288"
     steps:
       - run:
           name: Job Start
@@ -1618,9 +2010,12 @@ jobs:
   # CONTAINER IMAGES CI — Docker build + Hadolint
   # ==========================================================================
   container-image-build:
-    # machine required: docker build (Docker-in-Docker)
-    machine:
-      image: ubuntu-2204:current
+    # migrated from machine: uses docker executor + setup_remote_docker for the daemon.
+    # Cost note: docker.large.gen2 primary ($0.0144/min) + remote daemon (~$0.022/min)
+    # is *higher* per minute than machine.large.gen2 ($0.022/min). Migration done for
+    # fleet uniformity in the benchmark; not a per-job cost win.
+    docker:
+      - image: cimg/base:current
     resource_class: large.gen2
     steps:
       - run:
@@ -1630,6 +2025,9 @@ jobs:
       - run:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - setup_remote_docker:
+          version: default
+          docker_layer_caching: false
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -1725,11 +2123,63 @@ jobs:
           POSTGRES_USER: posthog
           POSTGRES_DB: posthog
           POSTGRES_PASSWORD: posthog
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /docker-entrypoint-initdb.d
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            CREATE DATABASE test_posthog;
+            CREATE DATABASE posthog_persons;
+            CREATE DATABASE posthog_persons_e2e_test;
+            CREATE DATABASE posthog_e2e_test;
+            CREATE DATABASE test_behavioral_cohorts;
+            CREATE DATABASE cyclotron;
+            CREATE DATABASE cyclotron_node;
+            CREATE DATABASE dagster_test;
+            CREATE DATABASE temporal;
+            CREATE DATABASE temporal_visibility;
+            GRANT ALL PRIVILEGES ON DATABASE test_posthog TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal_visibility TO posthog;
+            EOF
+            exec docker-entrypoint.sh postgres
       - image: redis:7.2-alpine
       - image: clickhouse/clickhouse-server:26.3.9.8
         environment:
           CLICKHOUSE_SKIP_USER_SETUP: "1"
           KAFKA_HOSTS: "localhost:9092"
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /etc/clickhouse-server/config.d
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            <clickhouse>
+              <remote_servers replace="replace">
+                <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
+                <posthog_single_shard><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_single_shard>
+                <posthog_migrations><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_migrations>
+                <posthog_writable><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_writable>
+                <posthog_primary_replica><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_primary_replica>
+                <ai_events><shard><replica><host>localhost</host><port>9000</port></replica></shard></ai_events>
+                <aux><shard><replica><host>localhost</host><port>9000</port></replica></shard></aux>
+                <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
+                <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
+              </remote_servers>
+              <macros>
+                <shard>01</shard>
+                <replica>ch1</replica>
+                <hostClusterType>online</hostClusterType>
+                <hostClusterRole>data</hostClusterRole>
+              </macros>
+              <uncompressed_cache_size>268435456</uncompressed_cache_size>
+              <mark_cache_size>268435456</mark_cache_size>
+              <max_server_memory_usage>2147483648</max_server_memory_usage>
+              <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+            </clickhouse>
+            EOF
+            exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
         command:
@@ -1756,6 +2206,16 @@ jobs:
           discovery.type: single-node
           xpack.security.enabled: "false"
           ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+      - image: temporalio/auto-setup:1.22
+        environment:
+          DB: postgres12
+          DB_PORT: "5432"
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+          DBNAME: temporal
+          VISIBILITY_DBNAME: temporal_visibility
+          LOG_LEVEL: warn
     resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
@@ -1839,6 +2299,40 @@ jobs:
               sleep 5
             done
             nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+      - run:
+          name: Push PostHog UDFs to ClickHouse
+          command: |
+            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            import xml.etree.ElementTree as ET, re, urllib.request, sys, os
+            if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
+                print('No UDF file; skipping'); sys.exit(0)
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            try:
+                latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+                funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+                merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            except FileNotFoundError:
+                merged = base
+            root = ET.fromstring(merged)
+            pushed = skipped = 0
+            for fn in root.findall('.//function'):
+                ftype = (fn.findtext('type') or 'sql').lower()
+                name = fn.findtext('name')
+                body = fn.findtext('lambda') or fn.findtext('command')
+                if ftype != 'executable_pool' and ftype != 'executable' and name and body:
+                    stmt = f"CREATE OR REPLACE FUNCTION {name} AS {body}"
+                    try:
+                        urllib.request.urlopen(
+                            urllib.request.Request('http://localhost:8123/', data=stmt.encode(), method='POST'),
+                            timeout=10
+                        ).read()
+                        pushed += 1
+                    except Exception as e:
+                        print(f'WARN: UDF {name} push failed: {e}', file=sys.stderr)
+                else:
+                    skipped += 1
+            print(f'UDFs: {pushed} pushed, {skipped} skipped (executable UDFs not supported on docker sidecar)')
+            PYEOF
       - run:
           name: Run migrations
           command: |
@@ -1950,9 +2444,99 @@ jobs:
           command: echo "STEP_DONE_TEST=$(date +%s%N)"
 
   mcp-integration-tests:
-    # machine required: multi-service integration tests
-    machine:
-      image: ubuntu-2204:current
+    # migrated to docker.large.gen2: sidecars replace docker-compose, PostHog web runs in primary.
+    docker:
+      - image: cimg/python:3.12-node
+      - image: postgres:15.12-alpine
+        environment:
+          POSTGRES_USER: posthog
+          POSTGRES_DB: posthog
+          POSTGRES_PASSWORD: posthog
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /docker-entrypoint-initdb.d
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            CREATE DATABASE test_posthog;
+            CREATE DATABASE posthog_persons;
+            CREATE DATABASE posthog_persons_e2e_test;
+            CREATE DATABASE posthog_e2e_test;
+            CREATE DATABASE test_behavioral_cohorts;
+            CREATE DATABASE cyclotron;
+            CREATE DATABASE cyclotron_node;
+            CREATE DATABASE dagster_test;
+            CREATE DATABASE temporal;
+            CREATE DATABASE temporal_visibility;
+            GRANT ALL PRIVILEGES ON DATABASE test_posthog TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal_visibility TO posthog;
+            EOF
+            exec docker-entrypoint.sh postgres
+      - image: redis:7.2-alpine
+      - image: clickhouse/clickhouse-server:26.3.9.8
+        environment:
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
+          KAFKA_HOSTS: "localhost:9092"
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /etc/clickhouse-server/config.d
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            <clickhouse>
+              <remote_servers replace="replace">
+                <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
+                <posthog_single_shard><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_single_shard>
+                <posthog_migrations><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_migrations>
+                <posthog_writable><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_writable>
+                <posthog_primary_replica><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_primary_replica>
+                <ai_events><shard><replica><host>localhost</host><port>9000</port></replica></shard></ai_events>
+                <aux><shard><replica><host>localhost</host><port>9000</port></replica></shard></aux>
+                <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
+                <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
+              </remote_servers>
+              <macros><shard>01</shard><replica>ch1</replica><hostClusterType>online</hostClusterType><hostClusterRole>data</hostClusterRole></macros>
+              <uncompressed_cache_size>268435456</uncompressed_cache_size>
+              <mark_cache_size>268435456</mark_cache_size>
+              <max_server_memory_usage>1610612736</max_server_memory_usage>
+              <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+            </clickhouse>
+            EOF
+            exec /entrypoint.sh
+      - image: zookeeper:3.7.0
+        environment:
+          JVMFLAGS: "-Xms128m -Xmx128m"
+      - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
+        command:
+          - redpanda
+          - start
+          - --kafka-addr=internal://0.0.0.0:9092
+          - --advertise-kafka-addr=internal://localhost:9092
+          - --rpc-addr=0.0.0.0:33145
+          - --advertise-rpc-addr=localhost:33145
+          - --mode=dev-container
+          - --smp=1
+          - --memory=512M
+          - --overprovisioned
+          - --set
+          - redpanda.empty_seed_starts_cluster=true
+      - image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+        environment:
+          MINIO_ROOT_USER: object_storage_root_user
+          MINIO_ROOT_PASSWORD: object_storage_root_password
+        entrypoint: sh
+        command: ["-c", "mkdir -p /data/posthog /data/ducklake-dev /data/ai-blobs && minio server --address :19000 --console-address :19001 /data"]
+      - image: temporalio/auto-setup:1.22
+        environment:
+          DB: postgres12
+          DB_PORT: "5432"
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+          DBNAME: temporal
+          VISIBILITY_DBNAME: temporal_visibility
+          LOG_LEVEL: warn
     resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
@@ -1970,6 +2554,7 @@ jobs:
       SKIP_SERVICE_VERSION_REQUIREMENTS: "1"
       NO_RESTART_LOOP: "1"
       DISABLE_SECURE_SSL_REDIRECT: "True"
+      UV_HTTP_TIMEOUT: "120"
     steps:
       - run:
           name: Job Start
@@ -1978,24 +2563,6 @@ jobs:
       - run:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
-      - run:
-          name: Start Docker services
-          command: |
-            python3 -c "
-            import re
-            base = open('docker/clickhouse/user_defined_function.xml').read()
-            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
-            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
-            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
-            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
-            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
-            " || true
-            docker compose -f docker-compose.dev.yml down || true
-            docker compose -f docker-compose.dev.yml up -d
-          no_output_timeout: 5m
-      - run:
-          name: Add service hostnames
-          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
       - run:
           name: Install uv
           command: |
@@ -2007,57 +2574,84 @@ jobs:
       - run:
           name: Install SAML dependencies
           no_output_timeout: 15m
-          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl postgresql-client || true
       - run:
           name: Install Rust
           command: |
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
             echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
       - run:
-          name: Install pnpm
-          command: npm install -g pnpm
-      - run:
-          name: Start Install
-          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+          name: Install pnpm via corepack
+          command: |
+            mkdir -p "$HOME/.local/bin"
+            corepack enable --install-directory "$HOME/.local/bin"
+            corepack prepare pnpm@11.1.1 --activate
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - restore_cache:
+          keys:
+            - uv-mcp-{{ checksum "uv.lock" }}
       - run:
           name: Install Python dependencies
           command: uv sync --frozen --dev
+      - save_cache:
+          key: uv-mcp-{{ checksum "uv.lock" }}
+          paths:
+            - ~/.cache/uv
       - run:
           name: Install Node dependencies
           command: pnpm --filter=@posthog/mcp... --filter='./products/*' install --frozen-lockfile
-      - run:
-          name: Install Done
-          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
       - run:
           name: Set up needed files
           command: |
             mkdir -p frontend/dist
             touch frontend/dist/index.html frontend/dist/layout.html frontend/dist/exporter.html
       - run:
-          name: Wait for Docker services
+          name: Wait for sidecar services
           no_output_timeout: 15m
           command: |
             echo "Waiting for Postgres..."
-            for i in $(seq 1 120); do
-              if nc -z localhost 5432 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; true; fi
-              sleep 5
-            done
-            nc -z localhost 5432 || (echo "Postgres failed to start"; exit 1)
+            for i in $(seq 1 120); do nc -z localhost 5432 2>/dev/null && break; sleep 5; done
+            nc -z localhost 5432 || (echo "Postgres failed"; exit 1)
             echo "Waiting for ClickHouse..."
-            for i in $(seq 1 120); do
-              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
-              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
-              sleep 5
-            done
+            for i in $(seq 1 120); do curl -sf http://localhost:8123/ping 2>/dev/null && break; sleep 5; done
             curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; exit 1)
             echo "Waiting for Temporal..."
-            for i in $(seq 1 60); do
-              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
-              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
-              sleep 5
-            done
-            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+            for i in $(seq 1 60); do nc -z localhost 7233 2>/dev/null && break; sleep 5; done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing)"
+      - run:
+          name: Push PostHog UDFs to ClickHouse
+          command: |
+            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            import xml.etree.ElementTree as ET, re, urllib.request, sys, os
+            if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
+                print('No UDF file; skipping'); sys.exit(0)
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            try:
+                latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+                funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+                merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            except FileNotFoundError:
+                merged = base
+            root = ET.fromstring(merged)
+            pushed = skipped = 0
+            for fn in root.findall('.//function'):
+                ftype = (fn.findtext('type') or 'sql').lower()
+                name = fn.findtext('name')
+                body = fn.findtext('lambda') or fn.findtext('command')
+                if ftype not in ('executable', 'executable_pool') and name and body:
+                    stmt = f"CREATE OR REPLACE FUNCTION {name} AS {body}"
+                    try:
+                        urllib.request.urlopen(urllib.request.Request('http://localhost:8123/', data=stmt.encode(), method='POST'), timeout=10).read()
+                        pushed += 1
+                    except Exception as e:
+                        print(f'WARN: UDF {name}: {e}', file=sys.stderr)
+                else:
+                    skipped += 1
+            print(f'UDFs: {pushed} pushed, {skipped} skipped')
+            PYEOF
       - run:
           name: Run migrations and seed data
           command: |
@@ -2065,11 +2659,11 @@ jobs:
             uv run python manage.py migrate_clickhouse
             uv run python manage.py generate_demo_data --n-clusters 10 --days-past 7 --days-future 0 --skip-materialization --skip-flag-sync --skip-user-product-list || true
       - run:
-          name: Start PostHog web
+          name: Start PostHog web + celery (background)
+          no_output_timeout: 3m
           command: |
             uv run python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
             uv run python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --workers 1 &> /tmp/server.log &
-          no_output_timeout: 3m
       - run:
           name: Wait for PostHog
           command: |
@@ -2077,6 +2671,7 @@ jobs:
               echo "=== PostHog server failed to start; dumping logs ==="
               echo "--- /tmp/server.log ---"; tail -200 /tmp/server.log 2>/dev/null || echo "(no server log)"
               echo "--- /tmp/celery.log ---"; tail -200 /tmp/celery.log 2>/dev/null || echo "(no celery log)"
+              free -m; ps aux --sort=-%mem | head -20
               exit 1
             fi
       - run:
@@ -2296,9 +2891,11 @@ jobs:
   # HOBBY E2E CI — Hobby deployment smoke test (Docker Compose)
   # ==========================================================================
   hobby-e2e:
-    # machine required: PostHog hobby installer runs the full stack in a VM
-    machine:
-      image: ubuntu-2204:current
+    # migrated from machine: uses docker executor + setup_remote_docker for the daemon.
+    # Health check must run via `docker exec` since primary container can't reach the remote
+    # daemon's localhost. Cost: ~65% more per minute than machine.large.gen2.
+    docker:
+      - image: cimg/base:current
     resource_class: large.gen2
     steps:
       - run:
@@ -2308,27 +2905,45 @@ jobs:
       - run:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
-      - run:
-          name: Install uv
-          command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - setup_remote_docker:
+          version: default
+          docker_layer_caching: false
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
       - run:
-          name: Build and start Hobby stack
-          command: |
-            docker compose -f docker-compose.hobby.yml build || docker compose -f docker-compose.base.yml build || true
-            docker compose -f docker-compose.hobby.yml up -d || docker compose -f docker-compose.base.yml up -d || true
+          name: Build and start Hobby stack (on remote daemon)
           no_output_timeout: 30m
-      - run:
-          name: Wait for stack health
           command: |
-            timeout 300 bash -c 'until curl -sf http://localhost:8000/_health 2>/dev/null; do sleep 5; done' || echo "Hobby stack did not become healthy"
+            docker compose -f docker-compose.hobby.yml build \
+              || docker compose -f docker-compose.base.yml build \
+              || true
+            docker compose -f docker-compose.hobby.yml up -d \
+              || docker compose -f docker-compose.base.yml up -d \
+              || true
+            docker compose -f docker-compose.hobby.yml ps || docker ps -a || true
+      - run:
+          name: Wait for stack health (via docker exec — primary can't reach remote localhost)
+          command: |
+            # Find any running container with a posthog web/app role to exec curl inside
+            WEB_CONTAINER=$(docker compose -f docker-compose.hobby.yml ps -q web 2>/dev/null | head -1)
+            [ -z "$WEB_CONTAINER" ] && WEB_CONTAINER=$(docker compose -f docker-compose.base.yml ps -q web 2>/dev/null | head -1)
+            [ -z "$WEB_CONTAINER" ] && WEB_CONTAINER=$(docker ps --filter "label=com.docker.compose.project" --format '{{.ID}}' | head -1)
+            if [ -z "$WEB_CONTAINER" ]; then
+              echo "No running compose containers found; cannot health-check"
+              docker ps -a
+              exit 0  # Match previous behavior of "did not become healthy" being non-fatal
+            fi
+            echo "Probing /_health via container $WEB_CONTAINER"
+            timeout 300 bash -c "until docker exec $WEB_CONTAINER curl -sf http://localhost:8000/_health 2>/dev/null; do sleep 5; done" \
+              || echo "Hobby stack did not become healthy"
       - run:
           name: Test Done
           command: echo "STEP_DONE_TEST=$(date +%s%N)"
+      - run:
+          name: Dump logs on failure
+          when: on_fail
+          command: docker compose -f docker-compose.hobby.yml logs --tail=300 || docker compose -f docker-compose.base.yml logs --tail=300 || true
 
   # ==========================================================================
   # SECURITY CI — Semgrep scans (Python, Go, Rust, JS, General)
@@ -2502,9 +3117,10 @@ jobs:
   # NODE.JS CONTAINER CI — Docker image build
   # ==========================================================================
   nodejs-container-build:
-    # machine required: builds Docker images
-    machine:
-      image: ubuntu-2204:current
+    # migrated from machine: uses docker executor + setup_remote_docker for the daemon.
+    # See container-image-build above for cost notes (per-minute cost rises ~65%).
+    docker:
+      - image: cimg/base:current
     resource_class: large.gen2
     steps:
       - run:
@@ -2514,6 +3130,9 @@ jobs:
       - run:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - setup_remote_docker:
+          version: default
+          docker_layer_caching: false
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -2537,6 +3156,27 @@ jobs:
           POSTGRES_USER: posthog
           POSTGRES_DB: posthog
           POSTGRES_PASSWORD: posthog
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /docker-entrypoint-initdb.d
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            CREATE DATABASE test_posthog;
+            CREATE DATABASE posthog_persons;
+            CREATE DATABASE posthog_persons_e2e_test;
+            CREATE DATABASE posthog_e2e_test;
+            CREATE DATABASE test_behavioral_cohorts;
+            CREATE DATABASE cyclotron;
+            CREATE DATABASE cyclotron_node;
+            CREATE DATABASE dagster_test;
+            CREATE DATABASE temporal;
+            CREATE DATABASE temporal_visibility;
+            GRANT ALL PRIVILEGES ON DATABASE test_posthog TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal_visibility TO posthog;
+            EOF
+            exec docker-entrypoint.sh postgres
       - image: redis:7.2-alpine
     resource_class: large.gen2
     environment:
@@ -2664,11 +3304,63 @@ jobs:
           POSTGRES_USER: posthog
           POSTGRES_DB: posthog
           POSTGRES_PASSWORD: posthog
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /docker-entrypoint-initdb.d
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            CREATE DATABASE test_posthog;
+            CREATE DATABASE posthog_persons;
+            CREATE DATABASE posthog_persons_e2e_test;
+            CREATE DATABASE posthog_e2e_test;
+            CREATE DATABASE test_behavioral_cohorts;
+            CREATE DATABASE cyclotron;
+            CREATE DATABASE cyclotron_node;
+            CREATE DATABASE dagster_test;
+            CREATE DATABASE temporal;
+            CREATE DATABASE temporal_visibility;
+            GRANT ALL PRIVILEGES ON DATABASE test_posthog TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal_visibility TO posthog;
+            EOF
+            exec docker-entrypoint.sh postgres
       - image: redis:7.2-alpine
       - image: clickhouse/clickhouse-server:26.3.9.8
         environment:
           CLICKHOUSE_SKIP_USER_SETUP: "1"
           KAFKA_HOSTS: "localhost:9092"
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /etc/clickhouse-server/config.d
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            <clickhouse>
+              <remote_servers replace="replace">
+                <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
+                <posthog_single_shard><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_single_shard>
+                <posthog_migrations><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_migrations>
+                <posthog_writable><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_writable>
+                <posthog_primary_replica><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_primary_replica>
+                <ai_events><shard><replica><host>localhost</host><port>9000</port></replica></shard></ai_events>
+                <aux><shard><replica><host>localhost</host><port>9000</port></replica></shard></aux>
+                <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
+                <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
+              </remote_servers>
+              <macros>
+                <shard>01</shard>
+                <replica>ch1</replica>
+                <hostClusterType>online</hostClusterType>
+                <hostClusterRole>data</hostClusterRole>
+              </macros>
+              <uncompressed_cache_size>268435456</uncompressed_cache_size>
+              <mark_cache_size>268435456</mark_cache_size>
+              <max_server_memory_usage>2147483648</max_server_memory_usage>
+              <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+            </clickhouse>
+            EOF
+            exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
         command:
@@ -2695,6 +3387,16 @@ jobs:
           discovery.type: single-node
           xpack.security.enabled: "false"
           ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+      - image: temporalio/auto-setup:1.22
+        environment:
+          DB: postgres12
+          DB_PORT: "5432"
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+          DBNAME: temporal
+          VISIBILITY_DBNAME: temporal_visibility
+          LOG_LEVEL: warn
     resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
@@ -2765,6 +3467,40 @@ jobs:
             done
             nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
       - run:
+          name: Push PostHog UDFs to ClickHouse
+          command: |
+            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            import xml.etree.ElementTree as ET, re, urllib.request, sys, os
+            if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
+                print('No UDF file; skipping'); sys.exit(0)
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            try:
+                latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+                funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+                merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            except FileNotFoundError:
+                merged = base
+            root = ET.fromstring(merged)
+            pushed = skipped = 0
+            for fn in root.findall('.//function'):
+                ftype = (fn.findtext('type') or 'sql').lower()
+                name = fn.findtext('name')
+                body = fn.findtext('lambda') or fn.findtext('command')
+                if ftype != 'executable_pool' and ftype != 'executable' and name and body:
+                    stmt = f"CREATE OR REPLACE FUNCTION {name} AS {body}"
+                    try:
+                        urllib.request.urlopen(
+                            urllib.request.Request('http://localhost:8123/', data=stmt.encode(), method='POST'),
+                            timeout=10
+                        ).read()
+                        pushed += 1
+                    except Exception as e:
+                        print(f'WARN: UDF {name} push failed: {e}', file=sys.stderr)
+                else:
+                    skipped += 1
+            print(f'UDFs: {pushed} pushed, {skipped} skipped (executable UDFs not supported on docker sidecar)')
+            PYEOF
+      - run:
           name: Run migrations
           command: |
             uv run python manage.py migrate --noinput
@@ -2799,11 +3535,63 @@ jobs:
           POSTGRES_USER: posthog
           POSTGRES_DB: posthog
           POSTGRES_PASSWORD: posthog
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /docker-entrypoint-initdb.d
+            cat > /docker-entrypoint-initdb.d/00-posthog.sql <<'EOF'
+            CREATE DATABASE test_posthog;
+            CREATE DATABASE posthog_persons;
+            CREATE DATABASE posthog_persons_e2e_test;
+            CREATE DATABASE posthog_e2e_test;
+            CREATE DATABASE test_behavioral_cohorts;
+            CREATE DATABASE cyclotron;
+            CREATE DATABASE cyclotron_node;
+            CREATE DATABASE dagster_test;
+            CREATE DATABASE temporal;
+            CREATE DATABASE temporal_visibility;
+            GRANT ALL PRIVILEGES ON DATABASE test_posthog TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal TO posthog;
+            GRANT ALL PRIVILEGES ON DATABASE temporal_visibility TO posthog;
+            EOF
+            exec docker-entrypoint.sh postgres
       - image: redis:7.2-alpine
       - image: clickhouse/clickhouse-server:26.3.9.8
         environment:
           CLICKHOUSE_SKIP_USER_SETUP: "1"
           KAFKA_HOSTS: "localhost:9092"
+        entrypoint: sh
+        command:
+          - -c
+          - |
+            mkdir -p /etc/clickhouse-server/config.d
+            cat > /etc/clickhouse-server/config.d/posthog-cluster.xml <<'EOF'
+            <clickhouse>
+              <remote_servers replace="replace">
+                <posthog><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog>
+                <posthog_single_shard><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_single_shard>
+                <posthog_migrations><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_migrations>
+                <posthog_writable><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_writable>
+                <posthog_primary_replica><shard><replica><host>localhost</host><port>9000</port></replica></shard></posthog_primary_replica>
+                <ai_events><shard><replica><host>localhost</host><port>9000</port></replica></shard></ai_events>
+                <aux><shard><replica><host>localhost</host><port>9000</port></replica></shard></aux>
+                <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
+                <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
+              </remote_servers>
+              <macros>
+                <shard>01</shard>
+                <replica>ch1</replica>
+                <hostClusterType>online</hostClusterType>
+                <hostClusterRole>data</hostClusterRole>
+              </macros>
+              <uncompressed_cache_size>268435456</uncompressed_cache_size>
+              <mark_cache_size>268435456</mark_cache_size>
+              <max_server_memory_usage>2147483648</max_server_memory_usage>
+              <max_server_memory_usage_to_ram_ratio>0.3</max_server_memory_usage_to_ram_ratio>
+            </clickhouse>
+            EOF
+            exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
         command:
@@ -2830,6 +3618,16 @@ jobs:
           discovery.type: single-node
           xpack.security.enabled: "false"
           ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+      - image: temporalio/auto-setup:1.22
+        environment:
+          DB: postgres12
+          DB_PORT: "5432"
+          POSTGRES_USER: posthog
+          POSTGRES_PWD: posthog
+          POSTGRES_SEEDS: localhost
+          DBNAME: temporal
+          VISIBILITY_DBNAME: temporal_visibility
+          LOG_LEVEL: warn
     resource_class: large.gen2
     environment:
       SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
@@ -2905,6 +3703,40 @@ jobs:
               sleep 5
             done
             nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+      - run:
+          name: Push PostHog UDFs to ClickHouse
+          command: |
+            python3 - <<'PYEOF' 2>&1 || echo "(UDF push non-fatal)"
+            import xml.etree.ElementTree as ET, re, urllib.request, sys, os
+            if not os.path.exists('docker/clickhouse/user_defined_function.xml'):
+                print('No UDF file; skipping'); sys.exit(0)
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            try:
+                latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+                funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+                merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            except FileNotFoundError:
+                merged = base
+            root = ET.fromstring(merged)
+            pushed = skipped = 0
+            for fn in root.findall('.//function'):
+                ftype = (fn.findtext('type') or 'sql').lower()
+                name = fn.findtext('name')
+                body = fn.findtext('lambda') or fn.findtext('command')
+                if ftype != 'executable_pool' and ftype != 'executable' and name and body:
+                    stmt = f"CREATE OR REPLACE FUNCTION {name} AS {body}"
+                    try:
+                        urllib.request.urlopen(
+                            urllib.request.Request('http://localhost:8123/', data=stmt.encode(), method='POST'),
+                            timeout=10
+                        ).read()
+                        pushed += 1
+                    except Exception as e:
+                        print(f'WARN: UDF {name} push failed: {e}', file=sys.stderr)
+                else:
+                    skipped += 1
+            print(f'UDFs: {pushed} pushed, {skipped} skipped (executable UDFs not supported on docker sidecar)')
+            PYEOF
       - run:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
@@ -3123,8 +3955,8 @@ workflows:
   # Original workflows (sysbench, python, frontend, hog, backend, rust, nodejs)
   posthog-ci:
     jobs:
-      # Sysbench
-      - sysbench
+      # Sysbench (only docker variant; machine baseline data archived in benchmark report)
+      # - sysbench   # disabled: was the only remaining machine.large.gen2 job; baseline preserved in posthog-sysbench-sweep-2026-05-07.md
       - sysbench-docker
 
       # Python CI
