@@ -1,2 +1,0 @@
-import './conversations'
-import './surveys'
