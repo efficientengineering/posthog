@@ -22,6 +22,7 @@ jobs:
   # SYSBENCH — Synthetic hardware benchmark
   # ==========================================================================
   sysbench:
+    # machine: synthetic hardware benchmark, executor choice intentional
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -381,6 +382,7 @@ jobs:
       person-on-events:
         type: boolean
         default: false
+    # machine required: docker-compose service stack (CH, PG, Kafka, Redis, Temporal, MinIO)
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -603,6 +605,7 @@ jobs:
   # RUST CI — Build + Test (needs Docker Compose for services)
   # ==========================================================================
   rust-build:
+    # machine required: rust workspace + live Postgres for sqlx migrations
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -651,6 +654,7 @@ jobs:
             - rust/target
 
   rust-lint:
+    # machine required: rust workspace + live Postgres for sqlx migrations
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -699,6 +703,7 @@ jobs:
     parameters:
       packages:
         type: string
+    # machine required: rust workspace + live Postgres for sqlx migrations
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -958,6 +963,7 @@ jobs:
     parameters:
       shard:
         type: integer
+    # machine required: docker-compose service stack
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -1128,6 +1134,7 @@ jobs:
   # E2E PLAYWRIGHT — Full stack E2E tests (machine xlarge for 8 vCPU)
   # ==========================================================================
   e2e-playwright:
+    # machine required: docker-compose service stack + Playwright browser
     machine:
       image: ubuntu-2204:current
     resource_class: xlarge.gen2  # match GHA depot-ubuntu-latest-8 (8 vCPU). Verified against ci-e2e-playwright.yml: PostHog downsized from 16 to 8 cores in PR #46853 — "the workload 'is not resource constrained' even after sharding was removed." 2xlarge.gen2 (16) was 2x oversized.
@@ -1445,6 +1452,7 @@ jobs:
   # CONTAINER IMAGES CI — Docker build + Hadolint
   # ==========================================================================
   container-image-build:
+    # machine required: docker build (Docker-in-Docker)
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -1543,6 +1551,7 @@ jobs:
   # DAGSTER CI — Pipeline tests (needs Docker Compose)
   # ==========================================================================
   dagster-tests:
+    # machine required: docker-compose service stack
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -1750,6 +1759,7 @@ jobs:
           command: echo "STEP_DONE_TEST=$(date +%s%N)"
 
   mcp-integration-tests:
+    # machine required: multi-service integration tests
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -2095,6 +2105,7 @@ jobs:
   # HOBBY E2E CI — Hobby deployment smoke test (Docker Compose)
   # ==========================================================================
   hobby-e2e:
+    # machine required: PostHog hobby installer runs the full stack in a VM
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -2300,6 +2311,7 @@ jobs:
   # NODE.JS CONTAINER CI — Docker image build
   # ==========================================================================
   nodejs-container-build:
+    # machine required: builds Docker images
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -2326,6 +2338,7 @@ jobs:
   # RUST FLAGS INTEGRATION — Feature flags integration tests
   # ==========================================================================
   rust-flags-integration:
+    # machine required: live Postgres + Kafka for flags integration tests
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -2447,6 +2460,7 @@ jobs:
   # AGENT SKILLS CI — Lint + build agent skills
   # ==========================================================================
   agent-skills-tests:
+    # machine required: docker-compose service stack
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
@@ -2551,6 +2565,7 @@ jobs:
         type: string
       test-paths:
         type: string
+    # machine required: docker-compose service stack
     machine:
       image: ubuntu-2204:current
     resource_class: large.gen2
