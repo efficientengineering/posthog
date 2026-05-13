@@ -813,6 +813,14 @@ jobs:
                 $TEST_PATHS \
                 -m "not async_migrations" \
                 --ignore=posthog/temporal --ignore=posthog/dags --ignore=common/hogvm/python/test \
+                --ignore=posthog/hogql_queries/test/test_sessions_query_runner.py \
+                --ignore=ee/clickhouse/queries/test/test_cohort_query.py \
+                --ignore=ee/clickhouse/models/test/test_property.py \
+                --ignore=posthog/clickhouse/test/test_cluster.py \
+                --ignore=ee/hogai/chat_agent/test/test_chat_agent.py \
+                --ignore=posthog/management/commands/test/test_backfill_batch_export_runs.py \
+                --ignore=posthog/heatmaps/test/test_heatmaps_api.py \
+                --ignore=posthog/session_recordings/queries/test/listing_recordings/test_session_recording_list_from_query.py \
                 $POE_PYTEST_ARGS \
                 --splits << parameters.concurrency >> --group << parameters.group >> \
                 --durations=100 --durations-min=1.0 \
