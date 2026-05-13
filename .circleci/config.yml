@@ -2995,8 +2995,22 @@ jobs:
             free -m
       - run:
           name: Wait for PostHog
+          no_output_timeout: 15m   # CCI default is 10m; we wait up to 10m here so headroom is needed
           command: |
-            if ! timeout 600 bash -c 'until curl -sf http://localhost:8000; do sleep 2; done'; then
+            # Progress-printing wait loop so CCI's no_output_timeout doesn't kick in
+            READY=0
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8000 >/dev/null 2>&1; then
+                echo "PostHog ready after ${i}x5s"
+                READY=1
+                break
+              fi
+              [ $((i % 6)) -eq 0 ] && echo "Still waiting for PostHog (${i}x5s elapsed)..."
+              sleep 5
+            done
+            if [ "$READY" = "1" ]; then exit 0; fi
+            # READY=0 below: dump diagnostics and exit 1
+            if true; then
               echo "=== PostHog server failed to start within 600s; full log dump ==="
               echo "--- /tmp/server.log (full) ---"
               cat /tmp/server.log 2>/dev/null || echo "(no server log file)"
