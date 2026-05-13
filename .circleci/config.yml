@@ -529,6 +529,22 @@ jobs:
                 <node><host>localhost</host><port>2181</port></node>
               </zookeeper>
               <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
+              <!-- Force eager creation of system.query_log, crash_log, etc.
+                   PostHog's migrations create materialized views over these system tables,
+                   which fail with "Unknown table expression identifier" when CH creates them lazily on first use. -->
+              <system_tables_lazy_load>false</system_tables_lazy_load>
+              <query_log><database>system</database><table>query_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_log>
+              <crash_log><database>system</database><table>crash_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></crash_log>
+              <part_log><database>system</database><table>part_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></part_log>
+              <trace_log><database>system</database><table>trace_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></trace_log>
+              <metric_log><database>system</database><table>metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><collect_interval_milliseconds>1000</collect_interval_milliseconds></metric_log>
+              <asynchronous_metric_log><database>system</database><table>asynchronous_metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></asynchronous_metric_log>
+              <opentelemetry_span_log><database>system</database><table>opentelemetry_span_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><engine>engine MergeTree partition by toYYYYMM(finish_date) order by (finish_date, finish_time_us, trace_id)</engine></opentelemetry_span_log>
+              <session_log><database>system</database><table>session_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></session_log>
+              <query_views_log><database>system</database><table>query_views_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_views_log>
+              <query_thread_log><database>system</database><table>query_thread_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_thread_log>
+              <text_log><database>system</database><table>text_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><level>warning</level></text_log>
+              <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -978,6 +994,22 @@ jobs:
                 <node><host>localhost</host><port>2181</port></node>
               </zookeeper>
               <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
+              <!-- Force eager creation of system.query_log, crash_log, etc.
+                   PostHog's migrations create materialized views over these system tables,
+                   which fail with "Unknown table expression identifier" when CH creates them lazily on first use. -->
+              <system_tables_lazy_load>false</system_tables_lazy_load>
+              <query_log><database>system</database><table>query_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_log>
+              <crash_log><database>system</database><table>crash_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></crash_log>
+              <part_log><database>system</database><table>part_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></part_log>
+              <trace_log><database>system</database><table>trace_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></trace_log>
+              <metric_log><database>system</database><table>metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><collect_interval_milliseconds>1000</collect_interval_milliseconds></metric_log>
+              <asynchronous_metric_log><database>system</database><table>asynchronous_metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></asynchronous_metric_log>
+              <opentelemetry_span_log><database>system</database><table>opentelemetry_span_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><engine>engine MergeTree partition by toYYYYMM(finish_date) order by (finish_date, finish_time_us, trace_id)</engine></opentelemetry_span_log>
+              <session_log><database>system</database><table>session_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></session_log>
+              <query_views_log><database>system</database><table>query_views_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_views_log>
+              <query_thread_log><database>system</database><table>query_thread_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_thread_log>
+              <text_log><database>system</database><table>text_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><level>warning</level></text_log>
+              <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -1374,6 +1406,22 @@ jobs:
                 <node><host>localhost</host><port>2181</port></node>
               </zookeeper>
               <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
+              <!-- Force eager creation of system.query_log, crash_log, etc.
+                   PostHog's migrations create materialized views over these system tables,
+                   which fail with "Unknown table expression identifier" when CH creates them lazily on first use. -->
+              <system_tables_lazy_load>false</system_tables_lazy_load>
+              <query_log><database>system</database><table>query_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_log>
+              <crash_log><database>system</database><table>crash_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></crash_log>
+              <part_log><database>system</database><table>part_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></part_log>
+              <trace_log><database>system</database><table>trace_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></trace_log>
+              <metric_log><database>system</database><table>metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><collect_interval_milliseconds>1000</collect_interval_milliseconds></metric_log>
+              <asynchronous_metric_log><database>system</database><table>asynchronous_metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></asynchronous_metric_log>
+              <opentelemetry_span_log><database>system</database><table>opentelemetry_span_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><engine>engine MergeTree partition by toYYYYMM(finish_date) order by (finish_date, finish_time_us, trace_id)</engine></opentelemetry_span_log>
+              <session_log><database>system</database><table>session_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></session_log>
+              <query_views_log><database>system</database><table>query_views_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_views_log>
+              <query_thread_log><database>system</database><table>query_thread_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_thread_log>
+              <text_log><database>system</database><table>text_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><level>warning</level></text_log>
+              <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -1698,6 +1746,22 @@ jobs:
                 <node><host>localhost</host><port>2181</port></node>
               </zookeeper>
               <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
+              <!-- Force eager creation of system.query_log, crash_log, etc.
+                   PostHog's migrations create materialized views over these system tables,
+                   which fail with "Unknown table expression identifier" when CH creates them lazily on first use. -->
+              <system_tables_lazy_load>false</system_tables_lazy_load>
+              <query_log><database>system</database><table>query_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_log>
+              <crash_log><database>system</database><table>crash_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></crash_log>
+              <part_log><database>system</database><table>part_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></part_log>
+              <trace_log><database>system</database><table>trace_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></trace_log>
+              <metric_log><database>system</database><table>metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><collect_interval_milliseconds>1000</collect_interval_milliseconds></metric_log>
+              <asynchronous_metric_log><database>system</database><table>asynchronous_metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></asynchronous_metric_log>
+              <opentelemetry_span_log><database>system</database><table>opentelemetry_span_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><engine>engine MergeTree partition by toYYYYMM(finish_date) order by (finish_date, finish_time_us, trace_id)</engine></opentelemetry_span_log>
+              <session_log><database>system</database><table>session_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></session_log>
+              <query_views_log><database>system</database><table>query_views_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_views_log>
+              <query_thread_log><database>system</database><table>query_thread_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_thread_log>
+              <text_log><database>system</database><table>text_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><level>warning</level></text_log>
+              <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -2227,6 +2291,22 @@ jobs:
                 <node><host>localhost</host><port>2181</port></node>
               </zookeeper>
               <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
+              <!-- Force eager creation of system.query_log, crash_log, etc.
+                   PostHog's migrations create materialized views over these system tables,
+                   which fail with "Unknown table expression identifier" when CH creates them lazily on first use. -->
+              <system_tables_lazy_load>false</system_tables_lazy_load>
+              <query_log><database>system</database><table>query_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_log>
+              <crash_log><database>system</database><table>crash_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></crash_log>
+              <part_log><database>system</database><table>part_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></part_log>
+              <trace_log><database>system</database><table>trace_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></trace_log>
+              <metric_log><database>system</database><table>metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><collect_interval_milliseconds>1000</collect_interval_milliseconds></metric_log>
+              <asynchronous_metric_log><database>system</database><table>asynchronous_metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></asynchronous_metric_log>
+              <opentelemetry_span_log><database>system</database><table>opentelemetry_span_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><engine>engine MergeTree partition by toYYYYMM(finish_date) order by (finish_date, finish_time_us, trace_id)</engine></opentelemetry_span_log>
+              <session_log><database>system</database><table>session_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></session_log>
+              <query_views_log><database>system</database><table>query_views_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_views_log>
+              <query_thread_log><database>system</database><table>query_thread_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_thread_log>
+              <text_log><database>system</database><table>text_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><level>warning</level></text_log>
+              <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -2561,6 +2641,22 @@ jobs:
                 <node><host>localhost</host><port>2181</port></node>
               </zookeeper>
               <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
+              <!-- Force eager creation of system.query_log, crash_log, etc.
+                   PostHog's migrations create materialized views over these system tables,
+                   which fail with "Unknown table expression identifier" when CH creates them lazily on first use. -->
+              <system_tables_lazy_load>false</system_tables_lazy_load>
+              <query_log><database>system</database><table>query_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_log>
+              <crash_log><database>system</database><table>crash_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></crash_log>
+              <part_log><database>system</database><table>part_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></part_log>
+              <trace_log><database>system</database><table>trace_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></trace_log>
+              <metric_log><database>system</database><table>metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><collect_interval_milliseconds>1000</collect_interval_milliseconds></metric_log>
+              <asynchronous_metric_log><database>system</database><table>asynchronous_metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></asynchronous_metric_log>
+              <opentelemetry_span_log><database>system</database><table>opentelemetry_span_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><engine>engine MergeTree partition by toYYYYMM(finish_date) order by (finish_date, finish_time_us, trace_id)</engine></opentelemetry_span_log>
+              <session_log><database>system</database><table>session_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></session_log>
+              <query_views_log><database>system</database><table>query_views_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_views_log>
+              <query_thread_log><database>system</database><table>query_thread_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_thread_log>
+              <text_log><database>system</database><table>text_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><level>warning</level></text_log>
+              <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -3458,6 +3554,22 @@ jobs:
                 <node><host>localhost</host><port>2181</port></node>
               </zookeeper>
               <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
+              <!-- Force eager creation of system.query_log, crash_log, etc.
+                   PostHog's migrations create materialized views over these system tables,
+                   which fail with "Unknown table expression identifier" when CH creates them lazily on first use. -->
+              <system_tables_lazy_load>false</system_tables_lazy_load>
+              <query_log><database>system</database><table>query_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_log>
+              <crash_log><database>system</database><table>crash_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></crash_log>
+              <part_log><database>system</database><table>part_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></part_log>
+              <trace_log><database>system</database><table>trace_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></trace_log>
+              <metric_log><database>system</database><table>metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><collect_interval_milliseconds>1000</collect_interval_milliseconds></metric_log>
+              <asynchronous_metric_log><database>system</database><table>asynchronous_metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></asynchronous_metric_log>
+              <opentelemetry_span_log><database>system</database><table>opentelemetry_span_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><engine>engine MergeTree partition by toYYYYMM(finish_date) order by (finish_date, finish_time_us, trace_id)</engine></opentelemetry_span_log>
+              <session_log><database>system</database><table>session_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></session_log>
+              <query_views_log><database>system</database><table>query_views_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_views_log>
+              <query_thread_log><database>system</database><table>query_thread_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_thread_log>
+              <text_log><database>system</database><table>text_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><level>warning</level></text_log>
+              <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
             exec /entrypoint.sh
@@ -3699,6 +3811,22 @@ jobs:
                 <node><host>localhost</host><port>2181</port></node>
               </zookeeper>
               <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
+              <!-- Force eager creation of system.query_log, crash_log, etc.
+                   PostHog's migrations create materialized views over these system tables,
+                   which fail with "Unknown table expression identifier" when CH creates them lazily on first use. -->
+              <system_tables_lazy_load>false</system_tables_lazy_load>
+              <query_log><database>system</database><table>query_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_log>
+              <crash_log><database>system</database><table>crash_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></crash_log>
+              <part_log><database>system</database><table>part_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></part_log>
+              <trace_log><database>system</database><table>trace_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></trace_log>
+              <metric_log><database>system</database><table>metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><collect_interval_milliseconds>1000</collect_interval_milliseconds></metric_log>
+              <asynchronous_metric_log><database>system</database><table>asynchronous_metric_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></asynchronous_metric_log>
+              <opentelemetry_span_log><database>system</database><table>opentelemetry_span_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><engine>engine MergeTree partition by toYYYYMM(finish_date) order by (finish_date, finish_time_us, trace_id)</engine></opentelemetry_span_log>
+              <session_log><database>system</database><table>session_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></session_log>
+              <query_views_log><database>system</database><table>query_views_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_views_log>
+              <query_thread_log><database>system</database><table>query_thread_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></query_thread_log>
+              <text_log><database>system</database><table>text_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds><level>warning</level></text_log>
+              <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
             exec /entrypoint.sh
