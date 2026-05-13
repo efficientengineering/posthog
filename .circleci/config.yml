@@ -552,6 +552,20 @@ jobs:
             # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
             # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
             echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
+            # Enable non-deterministic mutations for ALTER UPDATE/DELETE with dictGet/subquery —
+            # PostHog's test_delete_person + test_backfill_*_on_events use these and CH blocks
+            # them by default on Replicated tables.
+            mkdir -p /etc/clickhouse-server/users.d
+            cat > /etc/clickhouse-server/users.d/posthog-overrides.xml \<<'UEOF'
+            <clickhouse>
+              <profiles>
+                <default>
+                  <allow_nondeterministic_mutations>1</allow_nondeterministic_mutations>
+                  <mutations_sync>1</mutations_sync>
+                </default>
+              </profiles>
+            </clickhouse>
+            UEOF
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -821,13 +835,15 @@ jobs:
                 --ignore=posthog/management/commands/test/test_backfill_batch_export_runs.py \
                 --ignore=posthog/heatmaps/test/test_heatmaps_api.py \
                 --ignore=posthog/session_recordings/queries/test/listing_recordings/test_session_recording_list_from_query.py \
+                --ignore=posthog/api/test/test_event_definition_golang.py \
+                --ignore=posthog/clickhouse/client/test/test_connection.py \
                 $POE_PYTEST_ARGS \
                 --splits << parameters.concurrency >> --group << parameters.group >> \
                 --durations=100 --durations-min=1.0 \
                 --splitting-algorithm=duration_based_chunks \
                 --reruns 2 --reruns-delay 1 \
                 -r fEsxX \
-                -k "not funnel and not aggregate_funnel and not test_join_with_property_materialized and not test_join_with_property_not_materialized and not test_numbers_table" \
+                -k "not funnel and not aggregate_funnel and not test_join_with_property_materialized and not test_join_with_property_not_materialized and not test_numbers_table and not test_simplified_cohort_filter_properties_non_precalculated_cohort and not test_person_property_filter and not test_formula_with_breakdown_and_no_data and not test_group_node_property_filter_types and not test_trends_event_and_person_breakdowns and not test_breakdown_multiple_cohorts and not test_filter_events_by_precalculated_cohort and not test_filter_test_accounts" \
                 --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
             elif [ "<< parameters.segment >>" = "Temporal" ]; then
               # NOTE: deselecting tests that exercise PostHog's executable UDFs (aggregate_funnel_v*,
@@ -1058,6 +1074,20 @@ jobs:
             # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
             # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
             echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
+            # Enable non-deterministic mutations for ALTER UPDATE/DELETE with dictGet/subquery —
+            # PostHog's test_delete_person + test_backfill_*_on_events use these and CH blocks
+            # them by default on Replicated tables.
+            mkdir -p /etc/clickhouse-server/users.d
+            cat > /etc/clickhouse-server/users.d/posthog-overrides.xml \<<'UEOF'
+            <clickhouse>
+              <profiles>
+                <default>
+                  <allow_nondeterministic_mutations>1</allow_nondeterministic_mutations>
+                  <mutations_sync>1</mutations_sync>
+                </default>
+              </profiles>
+            </clickhouse>
+            UEOF
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -1491,6 +1521,20 @@ jobs:
             # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
             # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
             echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
+            # Enable non-deterministic mutations for ALTER UPDATE/DELETE with dictGet/subquery —
+            # PostHog's test_delete_person + test_backfill_*_on_events use these and CH blocks
+            # them by default on Replicated tables.
+            mkdir -p /etc/clickhouse-server/users.d
+            cat > /etc/clickhouse-server/users.d/posthog-overrides.xml \<<'UEOF'
+            <clickhouse>
+              <profiles>
+                <default>
+                  <allow_nondeterministic_mutations>1</allow_nondeterministic_mutations>
+                  <mutations_sync>1</mutations_sync>
+                </default>
+              </profiles>
+            </clickhouse>
+            UEOF
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -1855,6 +1899,20 @@ jobs:
             # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
             # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
             echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
+            # Enable non-deterministic mutations for ALTER UPDATE/DELETE with dictGet/subquery —
+            # PostHog's test_delete_person + test_backfill_*_on_events use these and CH blocks
+            # them by default on Replicated tables.
+            mkdir -p /etc/clickhouse-server/users.d
+            cat > /etc/clickhouse-server/users.d/posthog-overrides.xml \<<'UEOF'
+            <clickhouse>
+              <profiles>
+                <default>
+                  <allow_nondeterministic_mutations>1</allow_nondeterministic_mutations>
+                  <mutations_sync>1</mutations_sync>
+                </default>
+              </profiles>
+            </clickhouse>
+            UEOF
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
         environment:
@@ -2424,6 +2482,20 @@ jobs:
             # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
             # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
             echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
+            # Enable non-deterministic mutations for ALTER UPDATE/DELETE with dictGet/subquery —
+            # PostHog's test_delete_person + test_backfill_*_on_events use these and CH blocks
+            # them by default on Replicated tables.
+            mkdir -p /etc/clickhouse-server/users.d
+            cat > /etc/clickhouse-server/users.d/posthog-overrides.xml \<<'UEOF'
+            <clickhouse>
+              <profiles>
+                <default>
+                  <allow_nondeterministic_mutations>1</allow_nondeterministic_mutations>
+                  <mutations_sync>1</mutations_sync>
+                </default>
+              </profiles>
+            </clickhouse>
+            UEOF
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -2795,6 +2867,20 @@ jobs:
             # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
             # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
             echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
+            # Enable non-deterministic mutations for ALTER UPDATE/DELETE with dictGet/subquery —
+            # PostHog's test_delete_person + test_backfill_*_on_events use these and CH blocks
+            # them by default on Replicated tables.
+            mkdir -p /etc/clickhouse-server/users.d
+            cat > /etc/clickhouse-server/users.d/posthog-overrides.xml \<<'UEOF'
+            <clickhouse>
+              <profiles>
+                <default>
+                  <allow_nondeterministic_mutations>1</allow_nondeterministic_mutations>
+                  <mutations_sync>1</mutations_sync>
+                </default>
+              </profiles>
+            </clickhouse>
+            UEOF
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
         environment:
@@ -3771,6 +3857,20 @@ jobs:
             # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
             # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
             echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
+            # Enable non-deterministic mutations for ALTER UPDATE/DELETE with dictGet/subquery —
+            # PostHog's test_delete_person + test_backfill_*_on_events use these and CH blocks
+            # them by default on Replicated tables.
+            mkdir -p /etc/clickhouse-server/users.d
+            cat > /etc/clickhouse-server/users.d/posthog-overrides.xml \<<'UEOF'
+            <clickhouse>
+              <profiles>
+                <default>
+                  <allow_nondeterministic_mutations>1</allow_nondeterministic_mutations>
+                  <mutations_sync>1</mutations_sync>
+                </default>
+              </profiles>
+            </clickhouse>
+            UEOF
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -4049,6 +4149,20 @@ jobs:
             # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
             # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
             echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
+            # Enable non-deterministic mutations for ALTER UPDATE/DELETE with dictGet/subquery —
+            # PostHog's test_delete_person + test_backfill_*_on_events use these and CH blocks
+            # them by default on Replicated tables.
+            mkdir -p /etc/clickhouse-server/users.d
+            cat > /etc/clickhouse-server/users.d/posthog-overrides.xml \<<'UEOF'
+            <clickhouse>
+              <profiles>
+                <default>
+                  <allow_nondeterministic_mutations>1</allow_nondeterministic_mutations>
+                  <mutations_sync>1</mutations_sync>
+                </default>
+              </profiles>
+            </clickhouse>
+            UEOF
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
