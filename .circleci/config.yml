@@ -1775,7 +1775,7 @@ jobs:
           name: Start Test
           command: echo "STEP_START_TEST=$(date +%s%N)"
       - run:
-          name: Run Node.js tests (shard << parameters.shard >>/3)
+          name: Run Node.js tests (shard << parameters.shard >>/9)
           command: |
             # Jest forks subprocesses that invoke `python …`; activate uv venv so they find Django
             source .venv/bin/activate
@@ -1789,7 +1789,7 @@ jobs:
             # Trim NODE_OPTIONS heap to 1.5GB (only 1 worker now, more headroom for the parent).
             export NODE_OPTIONS='--max_old_space_size=1536'
             export SHARD_INDEX=<< parameters.shard >>
-            export SHARD_COUNT=3
+            export SHARD_COUNT=9
             export LOG_LEVEL=info
             export LOCALSTACK_ENABLED=1
             # CI=true also makes jest's reporter print more by default
@@ -4614,7 +4614,7 @@ workflows:
       - nodejs-test:
           matrix:
             parameters:
-              shard: [1, 2, 3]
+              shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
   # E2E Playwright workflow
   e2e-playwright-ci:
