@@ -509,6 +509,12 @@ jobs:
                 <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
                 <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
               </remote_servers>
+              <named_collections>
+                <msk_cluster><kafka_broker_list from_env="KAFKA_HOSTS"/></msk_cluster>
+                <warpstream_ingestion><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_ingestion>
+                <warpstream_calculated_events><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_calculated_events>
+                <warpstream_replay><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_replay>
+              </named_collections>
               <macros>
                 <shard>01</shard>
                 <replica>ch1</replica>
@@ -952,6 +958,12 @@ jobs:
                 <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
                 <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
               </remote_servers>
+              <named_collections>
+                <msk_cluster><kafka_broker_list from_env="KAFKA_HOSTS"/></msk_cluster>
+                <warpstream_ingestion><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_ingestion>
+                <warpstream_calculated_events><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_calculated_events>
+                <warpstream_replay><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_replay>
+              </named_collections>
               <macros>
                 <shard>01</shard>
                 <replica>ch1</replica>
@@ -1342,6 +1354,12 @@ jobs:
                 <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
                 <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
               </remote_servers>
+              <named_collections>
+                <msk_cluster><kafka_broker_list from_env="KAFKA_HOSTS"/></msk_cluster>
+                <warpstream_ingestion><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_ingestion>
+                <warpstream_calculated_events><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_calculated_events>
+                <warpstream_replay><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_replay>
+              </named_collections>
               <macros>
                 <shard>01</shard>
                 <replica>ch1</replica>
@@ -1663,6 +1681,12 @@ jobs:
                 <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
                 <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
               </remote_servers>
+              <named_collections>
+                <msk_cluster><kafka_broker_list from_env="KAFKA_HOSTS"/></msk_cluster>
+                <warpstream_ingestion><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_ingestion>
+                <warpstream_calculated_events><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_calculated_events>
+                <warpstream_replay><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_replay>
+              </named_collections>
               <macros><shard>01</shard><replica>ch1</replica><hostClusterType>online</hostClusterType><hostClusterRole>data</hostClusterRole></macros>
               <uncompressed_cache_size>268435456</uncompressed_cache_size>
               <mark_cache_size>268435456</mark_cache_size>
@@ -2183,6 +2207,12 @@ jobs:
                 <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
                 <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
               </remote_servers>
+              <named_collections>
+                <msk_cluster><kafka_broker_list from_env="KAFKA_HOSTS"/></msk_cluster>
+                <warpstream_ingestion><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_ingestion>
+                <warpstream_calculated_events><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_calculated_events>
+                <warpstream_replay><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_replay>
+              </named_collections>
               <macros>
                 <shard>01</shard>
                 <replica>ch1</replica>
@@ -2516,6 +2546,12 @@ jobs:
                 <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
                 <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
               </remote_servers>
+              <named_collections>
+                <msk_cluster><kafka_broker_list from_env="KAFKA_HOSTS"/></msk_cluster>
+                <warpstream_ingestion><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_ingestion>
+                <warpstream_calculated_events><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_calculated_events>
+                <warpstream_replay><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_replay>
+              </named_collections>
               <macros><shard>01</shard><replica>ch1</replica><hostClusterType>online</hostClusterType><hostClusterRole>data</hostClusterRole></macros>
               <uncompressed_cache_size>268435456</uncompressed_cache_size>
               <mark_cache_size>268435456</mark_cache_size>
@@ -2949,18 +2985,37 @@ jobs:
       - run:
           name: Wait for stack health (via docker exec — primary can't reach remote localhost)
           no_output_timeout: 8m
+          shell: /bin/bash      # avoid CCI's default `bash -eo pipefail` killing the script on transient docker non-zero
           command: |
-            # Find any running container with a posthog web/app role to exec curl inside
-            WEB_CONTAINER=$(docker compose -f docker-compose.hobby.yml ps -q web 2>/dev/null | head -1)
-            [ -z "$WEB_CONTAINER" ] && WEB_CONTAINER=$(docker compose -f docker-compose.base.yml ps -q web 2>/dev/null | head -1)
-            [ -z "$WEB_CONTAINER" ] && WEB_CONTAINER=$(docker ps --filter "label=com.docker.compose.project" --format '{{.ID}}' | head -1)
+            set +eo pipefail   # hobby-e2e is a smoke test, not gating; we want to gather diagnostics
+            echo "=== Container state after compose up ==="
+            docker ps -a 2>&1 || true
+            echo ""
+            echo "=== compose ps (hobby) ==="
+            docker compose -f docker-compose.hobby.yml ps 2>&1 || true
+            echo ""
+
+            WEB_CONTAINER=""
+            for svc in web posthog hobby app; do
+              cid=$(docker compose -f docker-compose.hobby.yml ps -q "$svc" 2>/dev/null | head -1)
+              if [ -n "$cid" ]; then
+                WEB_CONTAINER="$cid"
+                echo "Found web container ($svc): $WEB_CONTAINER"
+                break
+              fi
+            done
             if [ -z "$WEB_CONTAINER" ]; then
-              echo "No running compose containers found; cannot health-check"
-              docker ps -a
-              exit 0  # Match previous behavior of "did not become healthy" being non-fatal
+              WEB_CONTAINER=$(docker ps --filter "label=com.docker.compose.project" --format '{{.ID}}' 2>/dev/null | head -1)
+              [ -n "$WEB_CONTAINER" ] && echo "Fallback: using first compose container $WEB_CONTAINER"
             fi
-            echo "Probing /_health via container $WEB_CONTAINER"
-            # Loop with progress output so CCI's no_output_timeout doesn't SIGTERM us
+
+            if [ -z "$WEB_CONTAINER" ]; then
+              echo "No compose containers found — hobby stack failed to bring up any service."
+              echo "(non-fatal for benchmark: machine→docker migration kept the job alive, hobby env vars not in scope)"
+              exit 0
+            fi
+
+            echo "Probing /_health via $WEB_CONTAINER (up to 5 minutes)..."
             for i in $(seq 1 60); do
               if docker exec "$WEB_CONTAINER" curl -sf http://localhost:8000/_health 2>/dev/null; then
                 echo "Hobby stack healthy after ${i}x5s"
@@ -2969,8 +3024,9 @@ jobs:
               [ $((i % 6)) -eq 0 ] && echo "Still waiting (${i}/60)..."
               sleep 5
             done
-            echo "Hobby stack did not become healthy in 300s (non-fatal for benchmark)"
-            docker ps -a || true
+            echo "Hobby stack did not become healthy in 300s (non-fatal)"
+            docker logs "$WEB_CONTAINER" --tail 100 2>&1 || true
+            exit 0
       - run:
           name: Test Done
           command: echo "STEP_DONE_TEST=$(date +%s%N)"
@@ -3382,6 +3438,12 @@ jobs:
                 <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
                 <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
               </remote_servers>
+              <named_collections>
+                <msk_cluster><kafka_broker_list from_env="KAFKA_HOSTS"/></msk_cluster>
+                <warpstream_ingestion><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_ingestion>
+                <warpstream_calculated_events><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_calculated_events>
+                <warpstream_replay><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_replay>
+              </named_collections>
               <macros>
                 <shard>01</shard>
                 <replica>ch1</replica>
@@ -3617,6 +3679,12 @@ jobs:
                 <ops><shard><replica><host>localhost</host><port>9000</port></replica></shard></ops>
                 <sessions><shard><replica><host>localhost</host><port>9000</port></replica></shard></sessions>
               </remote_servers>
+              <named_collections>
+                <msk_cluster><kafka_broker_list from_env="KAFKA_HOSTS"/></msk_cluster>
+                <warpstream_ingestion><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_ingestion>
+                <warpstream_calculated_events><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_calculated_events>
+                <warpstream_replay><kafka_broker_list from_env="KAFKA_HOSTS"/></warpstream_replay>
+              </named_collections>
               <macros>
                 <shard>01</shard>
                 <replica>ch1</replica>
