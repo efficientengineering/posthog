@@ -547,6 +547,9 @@ jobs:
               <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
+            # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
+            # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -1040,6 +1043,9 @@ jobs:
               <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
+            # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
+            # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -1468,6 +1474,9 @@ jobs:
               <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
+            # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
+            # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -1826,6 +1835,9 @@ jobs:
               <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
+            # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
+            # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
         environment:
@@ -2390,6 +2402,9 @@ jobs:
               <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
+            # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
+            # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -2732,8 +2747,8 @@ jobs:
               <macros><shard>01</shard><replica>ch1</replica><hostClusterType>online</hostClusterType><hostClusterRole>data</hostClusterRole></macros>
               <uncompressed_cache_size>268435456</uncompressed_cache_size>
               <mark_cache_size>268435456</mark_cache_size>
-              <max_server_memory_usage>3221225472</max_server_memory_usage>
-              <max_server_memory_usage_to_ram_ratio>0.4</max_server_memory_usage_to_ram_ratio>
+              <max_server_memory_usage>1610612736</max_server_memory_usage>
+              <max_server_memory_usage_to_ram_ratio>0.2</max_server_memory_usage_to_ram_ratio>
               <zookeeper>
                 <node><host>localhost</host><port>2181</port></node>
               </zookeeper>
@@ -2756,6 +2771,9 @@ jobs:
               <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
+            # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
+            # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
         environment:
@@ -2942,7 +2960,9 @@ jobs:
             uv run python manage.py run_autoreload_celery --type=worker --concurrency=1 &> /tmp/celery.log &
             CELERY_PID=$!
             # Use uvicorn instead of granian — granian crashes silently on some image/glibc combos
-            uv run uvicorn posthog.asgi:application --host 0.0.0.0 --port 8000 --workers 1 --log-level info &> /tmp/server.log &
+            # Drop --workers 1: uvicorn's multi-worker codepath needs a parent supervisor process.
+            # Single-process mode (no --workers) is the default and binds directly.
+            uv run uvicorn posthog.asgi:application --host 0.0.0.0 --port 8000 --log-level info &> /tmp/server.log &
             SERVER_PID=$!
             sleep 5
             echo "=== After 5s: celery_pid=$CELERY_PID($(ps -p $CELERY_PID -o stat= 2>/dev/null || echo DEAD)) server_pid=$SERVER_PID($(ps -p $SERVER_PID -o stat= 2>/dev/null || echo DEAD)) ==="
@@ -2955,8 +2975,8 @@ jobs:
       - run:
           name: Wait for PostHog
           command: |
-            if ! timeout 360 bash -c 'until curl -sf http://localhost:8000; do sleep 2; done'; then
-              echo "=== PostHog server failed to start within 360s; full log dump ==="
+            if ! timeout 600 bash -c 'until curl -sf http://localhost:8000; do sleep 2; done'; then
+              echo "=== PostHog server failed to start within 600s; full log dump ==="
               echo "--- /tmp/server.log (full) ---"
               cat /tmp/server.log 2>/dev/null || echo "(no server log file)"
               echo "--- /tmp/celery.log (full) ---"
@@ -3711,6 +3731,9 @@ jobs:
               <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
+            # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
+            # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -3984,6 +4007,9 @@ jobs:
               <backup_log><database>system</database><table>backup_log</table><flush_interval_milliseconds>1000</flush_interval_milliseconds></backup_log>
             </clickhouse>
             EOF
+            # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
+            # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
