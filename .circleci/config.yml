@@ -549,7 +549,9 @@ jobs:
             EOF
             # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
             # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
-            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
+            # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
+            # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -674,7 +676,7 @@ jobs:
             - ~/.cache/uv
       - run:
           name: Add service hostnames
-          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal host.docker.internal minio" | sudo tee -a /etc/hosts
       - run:
           name: Set up needed files
           command: |
@@ -1045,7 +1047,9 @@ jobs:
             EOF
             # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
             # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
-            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
+            # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
+            # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -1145,7 +1149,7 @@ jobs:
             - rust/target
       - run:
           name: Add service hostnames
-          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal host.docker.internal minio" | sudo tee -a /etc/hosts
       - run:
           name: Wait for Docker services
           no_output_timeout: 15m
@@ -1476,7 +1480,9 @@ jobs:
             EOF
             # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
             # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
-            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
+            # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
+            # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -1619,7 +1625,7 @@ jobs:
           command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
       - run:
           name: Add service hostnames
-          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal host.docker.internal minio" | sudo tee -a /etc/hosts
       - run:
           name: Wait for services
           no_output_timeout: 15m
@@ -1729,8 +1735,9 @@ jobs:
             export LOG_LEVEL=info
             export LOCALSTACK_ENABLED=1
             bin/turbo run test --filter=@posthog/nodejs
-          # was 30m on machine.large.gen2; docker.large.gen2 CPU is ~23% slower per sysbench, so bump
-          no_output_timeout: 60m
+          # 60m wasn't enough on docker.large.gen2; try 90m. If still times out, the jest suite
+          # is genuinely too slow to fit on this hardware tier and needs sharding bump.
+          no_output_timeout: 90m
       - run:
           name: Test Done
           command: echo "STEP_DONE_TEST=$(date +%s%N)"
@@ -1837,7 +1844,9 @@ jobs:
             EOF
             # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
             # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
-            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
+            # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
+            # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
         environment:
@@ -2404,7 +2413,9 @@ jobs:
             EOF
             # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
             # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
-            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
+            # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
+            # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -2499,7 +2510,7 @@ jobs:
           command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
       - run:
           name: Add service hostnames
-          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal host.docker.internal minio" | sudo tee -a /etc/hosts
       - run:
           name: Wait for Docker services
           no_output_timeout: 15m
@@ -2747,8 +2758,8 @@ jobs:
               <macros><shard>01</shard><replica>ch1</replica><hostClusterType>online</hostClusterType><hostClusterRole>data</hostClusterRole></macros>
               <uncompressed_cache_size>268435456</uncompressed_cache_size>
               <mark_cache_size>268435456</mark_cache_size>
-              <max_server_memory_usage>1610612736</max_server_memory_usage>
-              <max_server_memory_usage_to_ram_ratio>0.2</max_server_memory_usage_to_ram_ratio>
+              <max_server_memory_usage>2147483648</max_server_memory_usage>
+              <max_server_memory_usage_to_ram_ratio>0.25</max_server_memory_usage_to_ram_ratio>
               <zookeeper>
                 <node><host>localhost</host><port>2181</port></node>
               </zookeeper>
@@ -2773,7 +2784,9 @@ jobs:
             EOF
             # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
             # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
-            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
+            # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
+            # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
         environment:
@@ -3733,7 +3746,9 @@ jobs:
             EOF
             # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
             # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
-            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
+            # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
+            # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -3814,7 +3829,7 @@ jobs:
           command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
       - run:
           name: Add service hostnames
-          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal host.docker.internal minio" | sudo tee -a /etc/hosts
       - run:
           name: Wait for Docker services
           no_output_timeout: 15m
@@ -4009,7 +4024,9 @@ jobs:
             EOF
             # Map PostHog's compose-era hostnames to localhost so CH can resolve objectstorage
             # (data warehouse tests query S3 URLs that ref the hostname, not 'localhost')
-            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio" >> /etc/hosts
+            # host.docker.internal: PostHog's data warehouse tests use this Docker-Desktop magic
+            # hostname for S3 endpoints. On Linux Docker / CCI it's not auto-resolved.
+            echo "127.0.0.1 objectstorage db redis7 kafka clickhouse clickhouse-coordinator seaweedfs temporal minio host.docker.internal" >> /etc/hosts
             exec /entrypoint.sh
       - image: zookeeper:3.7.0
       - image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -4074,7 +4091,7 @@ jobs:
           command: echo "Services running as docker sidecars; no compose up needed"
       - run:
           name: Add service hostnames
-          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal host.docker.internal minio" | sudo tee -a /etc/hosts
       - run:
           name: Install uv
           command: |
