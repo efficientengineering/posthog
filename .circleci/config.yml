@@ -1777,15 +1777,10 @@ jobs:
       - run:
           name: Run Node.js tests (shard << parameters.shard >>/9)
           command: |
-            # Pipeline #82/#94 diagnosis: PostHog's pnpm test script is:
-            #   "test": "...; jest --runInBand --forceExit --shard=$SHARD_IDX/$SHARD_TOTAL ..."
-            # `--runInBand` means jest is ALREADY single-process — our earlier multi-worker
-            # OOM hypothesis was wrong. The actual silence is just jest's default reporter:
-            # without --verbose it only prints once per test FILE (not per test). PostHog's
-            # integration tests have huge per-file runtimes (5-15 min) → looks silent.
-            # ALSO: --turbo run test wraps the script and prevents flag pass-through to jest.
-            # Fix: bypass turbo's test task and invoke jest directly with --verbose +
-            # --testTimeout. Build dependencies via `turbo run build` first to keep caching.
+            # Pipeline #95: `bin/turbo run build` hangs silently after cyclotron compile.
+            # Likely @posthog/nodejs:build runs but produces no output. Bypass turbo
+            # entirely — build only what we need, with explicit echo timestamps so we
+            # can see WHERE it hangs if it does.
             source .venv/bin/activate
             export DATABASE_URL='postgres://posthog:posthog@localhost:5432/test_posthog'
             export NODE_OPTIONS='--max_old_space_size=4096'
@@ -1794,16 +1789,29 @@ jobs:
             export LOG_LEVEL=info
             export LOCALSTACK_ENABLED=1
             export CI=true
-            # Step 1: build cyclotron-node + nodejs deps via turbo (preserves cache)
-            bin/turbo run build --filter=@posthog/nodejs
-            # Step 2: invoke jest directly with extra flags for visibility + timeout-per-test
-            cd nodejs
+
+            echo "[$(date +%T)] STEP 1: Build cyclotron-node (cargo)"
+            cd rust/cyclotron-node
+            cargo build --release 2>&1 | tail -5
+            echo "[$(date +%T)] STEP 2: cyclotron-node cargo build DONE; move .so"
+            TARGET_DIR="${CARGO_TARGET_DIR:-../target}"
+            cp "$TARGET_DIR/release/libcyclotron_node.so" index.node || cp "$TARGET_DIR/release/libcyclotron_node.dylib" index.node || (echo "FATAL: cyclotron .so not found"; ls -la "$TARGET_DIR/release/" | head -20; exit 1)
+            echo "[$(date +%T)] STEP 3: cyclotron .so copied to index.node"
+            pnpm exec tsc 2>&1 || (echo "FATAL: cyclotron tsc failed"; exit 1)
+            echo "[$(date +%T)] STEP 4: cyclotron tsc DONE"
+
+            cd /home/circleci/project/nodejs
+            echo "[$(date +%T)] STEP 5: in nodejs directory; jest binary at:"
+            ls -la node_modules/.bin/jest 2>&1 || ls -la ../node_modules/.bin/jest 2>&1 || echo "(jest binary not found in either location)"
+
+            echo "[$(date +%T)] STEP 6: invoking jest directly (shard $SHARD_INDEX/$SHARD_COUNT)"
             pnpm exec jest --runInBand --forceExit \
               --shard=$SHARD_INDEX/$SHARD_COUNT \
               --testPathIgnorePatterns='postgres-parity' \
               --verbose \
               --testTimeout=120000 \
               --reporters=default
+            echo "[$(date +%T)] STEP 7: jest exited with $?"
           no_output_timeout: 60m
       - run:
           name: Test Done
