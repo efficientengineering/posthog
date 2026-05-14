@@ -1572,6 +1572,19 @@ jobs:
           DBNAME: temporal
           VISIBILITY_DBNAME: temporal_visibility
           LOG_LEVEL: warn
+      # Localstack — AWS service emulator (DynamoDB + KMS), needed for session-replay
+      # recording-api tests. Pipeline #97 shard 1 had 16 failures in
+      # recording-api.integration.test.ts "with Localstack" — all of them addressed by
+      # adding this sidecar.
+      - image: localstack/localstack:3.7
+        environment:
+          SERVICES: "dynamodb,kms"
+          DEBUG: "0"
+          DEFAULT_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
+      # maildev — SMTP+web mailcatcher, needed for email-service tests.
+      # Pipeline #97 shard 5 had 2 failures in email.service.test.ts "with maildev".
+      - image: maildev/maildev:latest
     resource_class: large.gen2
     environment:
       REDIS_URL: "redis://localhost"
@@ -1598,14 +1611,8 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services (with localstack + maildev for KMS/email tests)
-          command: |
-            for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure,dev_tools,localstack docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch localstack maildev && break
-              echo "Attempt $attempt failed, retrying in 10s..."
-              sleep 10
-            done
-          no_output_timeout: 10m
+          name: Skipped (sidecars on docker executor handle services — including localstack + maildev)
+          command: echo "Services running as docker sidecars; no compose up needed"
       - run:
           name: Install uv
           command: |
