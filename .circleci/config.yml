@@ -1777,26 +1777,33 @@ jobs:
       - run:
           name: Run Node.js tests (shard << parameters.shard >>/9)
           command: |
-            # Jest forks subprocesses that invoke `python …`; activate uv venv so they find Django
+            # Pipeline #82/#94 diagnosis: PostHog's pnpm test script is:
+            #   "test": "...; jest --runInBand --forceExit --shard=$SHARD_IDX/$SHARD_TOTAL ..."
+            # `--runInBand` means jest is ALREADY single-process — our earlier multi-worker
+            # OOM hypothesis was wrong. The actual silence is just jest's default reporter:
+            # without --verbose it only prints once per test FILE (not per test). PostHog's
+            # integration tests have huge per-file runtimes (5-15 min) → looks silent.
+            # ALSO: --turbo run test wraps the script and prevents flag pass-through to jest.
+            # Fix: bypass turbo's test task and invoke jest directly with --verbose +
+            # --testTimeout. Build dependencies via `turbo run build` first to keep caching.
             source .venv/bin/activate
             export DATABASE_URL='postgres://posthog:posthog@localhost:5432/test_posthog'
-            # Pipeline #79 finding: tests silent for 88+ min until 90m no_output_timeout kills
-            # them. Root cause: jest spawns N workers (defaults to ~50% of CPU = 4 workers on
-            # docker.large.gen2's 8 vCPU). Each worker allocates NODE_OPTIONS=2GB heap → up to
-            # 4x2GB=8GB heap competition → cgroup OOM kills workers silently → parent jest
-            # hangs waiting on dead workers. Fix: force jest --maxWorkers=1 and --verbose for
-            # progress output (each test name printed), via turbo's -- pass-through.
-            # Trim NODE_OPTIONS heap to 1.5GB (only 1 worker now, more headroom for the parent).
-            export NODE_OPTIONS='--max_old_space_size=1536'
+            export NODE_OPTIONS='--max_old_space_size=4096'
             export SHARD_INDEX=<< parameters.shard >>
             export SHARD_COUNT=9
             export LOG_LEVEL=info
             export LOCALSTACK_ENABLED=1
-            # CI=true also makes jest's reporter print more by default
             export CI=true
-            # --output-logs=full: tell turbo to stream all log output (not just summaries)
-            # `-- --maxWorkers=1 --verbose`: pass-through to jest itself
-            bin/turbo run test --filter=@posthog/nodejs --output-logs=full -- --maxWorkers=1 --verbose
+            # Step 1: build cyclotron-node + nodejs deps via turbo (preserves cache)
+            bin/turbo run build --filter=@posthog/nodejs
+            # Step 2: invoke jest directly with extra flags for visibility + timeout-per-test
+            cd nodejs
+            pnpm exec jest --runInBand --forceExit \
+              --shard=$SHARD_INDEX/$SHARD_COUNT \
+              --testPathIgnorePatterns='postgres-parity' \
+              --verbose \
+              --testTimeout=120000 \
+              --reporters=default
           no_output_timeout: 60m
       - run:
           name: Test Done
