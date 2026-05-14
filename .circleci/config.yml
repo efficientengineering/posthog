@@ -1557,11 +1557,9 @@ jobs:
           MINIO_ROOT_PASSWORD: object_storage_root_password
         entrypoint: sh
         command: ["-c", "mkdir -p /data/posthog /data/ducklake-dev /data/ai-blobs && minio server --address :19000 --console-address :19001 /data"]
-      - image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
-        environment:
-          discovery.type: single-node
-          xpack.security.enabled: "false"
-          ES_JAVA_OPTS: "-Xms256m -Xmx256m"
+      # ElasticSearch dropped from nodejs-test only: pipeline #98 shard 2 hit SIGKILL
+      # (cgroup OOM) after adding localstack+maildev. ES is not used by nodejs jest
+      # tests (Django/dagster still keep it). Saves ~256MB JVM heap.
       - image: temporalio/auto-setup:1.22
         environment:
           DB: postgres12
@@ -1572,18 +1570,18 @@ jobs:
           DBNAME: temporal
           VISIBILITY_DBNAME: temporal_visibility
           LOG_LEVEL: warn
-      # Localstack — AWS service emulator (DynamoDB + KMS), needed for session-replay
-      # recording-api tests. Pipeline #97 shard 1 had 16 failures in
-      # recording-api.integration.test.ts "with Localstack" — all of them addressed by
-      # adding this sidecar.
+      # Localstack — AWS service emulator (DynamoDB + KMS + S3). #98 shard 1 still
+      # had 2 failures in "S3 + decryption pipeline" — adding s3 to SERVICES fixes that.
+      # LAMBDA_DISABLED + LS_LOG=error trim memory + log noise.
       - image: localstack/localstack:3.7
         environment:
-          SERVICES: "dynamodb,kms"
+          SERVICES: "dynamodb,kms,s3"
           DEBUG: "0"
+          LS_LOG: error
+          LAMBDA_DISABLED: "1"
           DEFAULT_REGION: us-east-1
           AWS_DEFAULT_REGION: us-east-1
-      # maildev — SMTP+web mailcatcher, needed for email-service tests.
-      # Pipeline #97 shard 5 had 2 failures in email.service.test.ts "with maildev".
+      # maildev — SMTP+web mailcatcher for email-service tests.
       - image: maildev/maildev:latest
     resource_class: large.gen2
     environment:
