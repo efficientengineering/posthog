@@ -1790,15 +1790,17 @@ jobs:
             export LOCALSTACK_ENABLED=1
             export CI=true
 
-            echo "[$(date +%T)] STEP 1: Build cyclotron-node (cargo)"
-            cd rust/cyclotron-node
-            cargo build --release 2>&1 | tail -5
-            echo "[$(date +%T)] STEP 2: cyclotron-node cargo build DONE; move .so"
-            TARGET_DIR="${CARGO_TARGET_DIR:-../target}"
-            cp "$TARGET_DIR/release/libcyclotron_node.so" index.node || cp "$TARGET_DIR/release/libcyclotron_node.dylib" index.node || (echo "FATAL: cyclotron .so not found"; ls -la "$TARGET_DIR/release/" | head -20; exit 1)
-            echo "[$(date +%T)] STEP 3: cyclotron .so copied to index.node"
-            pnpm exec tsc 2>&1 || (echo "FATAL: cyclotron tsc failed"; exit 1)
-            echo "[$(date +%T)] STEP 4: cyclotron tsc DONE"
+            echo "[$(date +%T)] STEP 1: Build @posthog/nodejs's 3 workspace deps via pnpm"
+            # @posthog/nodejs imports @posthog/{cyclotron,hogvm,replay-headless} — all
+            # workspace packages that need to be built (dist/) so jest's TS transform
+            # can resolve types. Pipeline #96 jest ran in 44s but 14/42 test suites
+            # failed with "Cannot find module '@posthog/hogvm'" — that's this fix.
+            pnpm --filter=@posthog/cyclotron run build 2>&1 | tail -20
+            echo "[$(date +%T)] STEP 2: @posthog/cyclotron build DONE"
+            pnpm --filter=@posthog/hogvm run build 2>&1 | tail -20
+            echo "[$(date +%T)] STEP 3: @posthog/hogvm build DONE"
+            pnpm --filter=@posthog/replay-headless run build 2>&1 | tail -20
+            echo "[$(date +%T)] STEP 4: @posthog/replay-headless build DONE"
 
             cd /home/circleci/project/nodejs
             echo "[$(date +%T)] STEP 5: in nodejs directory; jest binary at:"
